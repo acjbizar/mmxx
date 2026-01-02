@@ -30,8 +30,8 @@
         <polygon id="r0c5-left" points="150,30 150,0 165,15"/>
         <polygon id="r0c6-top" points="180,0 210,0 195,15"/>
         <polygon id="r0c6-right" points="210,0 210,30 195,15"/>
-        <!--
         <polygon id="r0c6-bottom" points="210,30 180,30 195,15"/>
+        <!--
         <polygon id="r0c6-left" points="180,30 180,0 195,15"/>
         -->
         <polygon id="r0c7-top" points="210,0 240,0 225,15"/>

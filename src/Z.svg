@@ -62,9 +62,9 @@
         <polygon id="r1c3-left" points="90,60 90,30 105,45"/>
         <!--
         <polygon id="r1c4-top" points="120,30 150,30 135,45"/>
+        -->
         <polygon id="r1c4-right" points="150,30 150,60 135,45"/>
         <polygon id="r1c4-bottom" points="150,60 120,60 135,45"/>
-        -->
         <polygon id="r1c4-left" points="120,60 120,30 135,45"/>
         <polygon id="r1c5-top" points="150,30 180,30 165,45"/>
         <polygon id="r1c5-right" points="180,30 180,60 165,45"/>
@@ -95,10 +95,8 @@
         <polygon id="r2c2-bottom" points="90,90 60,90 75,75"/>
         <polygon id="r2c2-left" points="60,90 60,60 75,75"/>
         <polygon id="r2c3-top" points="90,60 120,60 105,75"/>
-        <!--
         <polygon id="r2c3-right" points="120,60 120,90 105,75"/>
         <polygon id="r2c3-bottom" points="120,90 90,90 105,75"/>
-        -->
         <polygon id="r2c3-left" points="90,90 90,60 105,75"/>
         <polygon id="r2c4-top" points="120,60 150,60 135,75"/>
         <polygon id="r2c4-right" points="150,60 150,90 135,75"/>
@@ -129,10 +127,8 @@
         <polygon id="r3c1-bottom" points="60,120 30,120 45,105"/>
         <polygon id="r3c1-left" points="30,120 30,90 45,105"/>
         <polygon id="r3c2-top" points="60,90 90,90 75,105"/>
-        <!--
         <polygon id="r3c2-right" points="90,90 90,120 75,105"/>
         <polygon id="r3c2-bottom" points="90,120 60,120 75,105"/>
-        -->
         <polygon id="r3c2-left" points="60,120 60,90 75,105"/>
         <polygon id="r3c3-top" points="90,90 120,90 105,105"/>
         <polygon id="r3c3-right" points="120,90 120,120 105,105"/>
@@ -163,10 +159,8 @@
         <polygon id="r4c0-bottom" points="30,150 0,150 15,135"/>
         <polygon id="r4c0-left" points="0,150 0,120 15,135"/>
         <polygon id="r4c1-top" points="30,120 60,120 45,135"/>
-        <!--
         <polygon id="r4c1-right" points="60,120 60,150 45,135"/>
         <polygon id="r4c1-bottom" points="60,150 30,150 45,135"/>
-        -->
         <polygon id="r4c1-left" points="30,150 30,120 45,135"/>
         <polygon id="r4c2-top" points="60,120 90,120 75,135"/>
         <polygon id="r4c2-right" points="90,120 90,150 75,135"/>
@@ -197,10 +191,8 @@
         <polygon id="r4c7-bottom" points="240,150 210,150 225,135"/>
         <polygon id="r4c7-left" points="210,150 210,120 225,135"/>
         <polygon id="r5c0-top" points="0,150 30,150 15,165"/>
-        <!--
         <polygon id="r5c0-right" points="30,150 30,180 15,165"/>
         <polygon id="r5c0-bottom" points="30,180 0,180 15,165"/>
-        -->
         <polygon id="r5c0-left" points="0,180 0,150 15,165"/>
         <polygon id="r5c1-top" points="30,150 60,150 45,165"/>
         <polygon id="r5c1-right" points="60,150 60,180 45,165"/>
@@ -214,33 +206,25 @@
         <polygon id="r5c3-top" points="90,150 120,150 105,165"/>
         -->
         <polygon id="r5c3-right" points="120,150 120,180 105,165"/>
-        <!--
         <polygon id="r5c3-bottom" points="120,180 90,180 105,165"/>
+        <!--
         <polygon id="r5c3-left" points="90,180 90,150 105,165"/>
         -->
         <polygon id="r5c4-top" points="120,150 150,150 135,165"/>
         <polygon id="r5c4-right" points="150,150 150,180 135,165"/>
-        <!--
         <polygon id="r5c4-bottom" points="150,180 120,180 135,165"/>
-        -->
         <polygon id="r5c4-left" points="120,180 120,150 135,165"/>
         <polygon id="r5c5-top" points="150,150 180,150 165,165"/>
         <polygon id="r5c5-right" points="180,150 180,180 165,165"/>
-        <!--
         <polygon id="r5c5-bottom" points="180,180 150,180 165,165"/>
-        -->
         <polygon id="r5c5-left" points="150,180 150,150 165,165"/>
         <polygon id="r5c6-top" points="180,150 210,150 195,165"/>
         <polygon id="r5c6-right" points="210,150 210,180 195,165"/>
-        <!--
         <polygon id="r5c6-bottom" points="210,180 180,180 195,165"/>
-        -->
         <polygon id="r5c6-left" points="180,180 180,150 195,165"/>
         <polygon id="r5c7-top" points="210,150 240,150 225,165"/>
         <polygon id="r5c7-right" points="240,150 240,180 225,165"/>
-        <!--
         <polygon id="r5c7-bottom" points="240,180 210,180 225,165"/>
-        -->
         <polygon id="r5c7-left" points="210,180 210,150 225,165"/>
         <polygon id="r6c0-top" points="0,180 30,180 15,195"/>
         <polygon id="r6c0-right" points="30,180 30,210 15,195"/>
