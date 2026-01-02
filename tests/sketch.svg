@@ -1,9 +1,91 @@
 <svg xmlns="http://www.w3.org/2000/svg" width="240" height="240" viewBox="0 0 240 240">
-    <!-- Black square background -->
-    <rect x="0" y="0" width="240" height="240" fill="#000"/>
+    <!-- Initial square (background) now white -->
+    <rect x="0" y="0" width="240" height="240" fill="#fff"/>
 
-    <!-- 8×8 grid (8 columns + 8 rows) -->
-    <!-- Cell size: 240 / 8 = 30 -->
+    <!-- 64 smaller black squares in an 8×8 grid (cell size: 30×30) -->
+    <g fill="#000" shape-rendering="crispEdges">
+        <!-- Row 0 -->
+        <rect x="0"   y="0"   width="30" height="30"/>
+        <rect x="30"  y="0"   width="30" height="30"/>
+        <rect x="60"  y="0"   width="30" height="30"/>
+        <rect x="90"  y="0"   width="30" height="30"/>
+        <rect x="120" y="0"   width="30" height="30"/>
+        <rect x="150" y="0"   width="30" height="30"/>
+        <rect x="180" y="0"   width="30" height="30"/>
+        <rect x="210" y="0"   width="30" height="30"/>
+
+        <!-- Row 1 -->
+        <rect x="0"   y="30"  width="30" height="30"/>
+        <rect x="30"  y="30"  width="30" height="30"/>
+        <rect x="60"  y="30"  width="30" height="30"/>
+        <rect x="90"  y="30"  width="30" height="30"/>
+        <rect x="120" y="30"  width="30" height="30"/>
+        <rect x="150" y="30"  width="30" height="30"/>
+        <rect x="180" y="30"  width="30" height="30"/>
+        <rect x="210" y="30"  width="30" height="30"/>
+
+        <!-- Row 2 -->
+        <rect x="0"   y="60"  width="30" height="30"/>
+        <rect x="30"  y="60"  width="30" height="30"/>
+        <rect x="60"  y="60"  width="30" height="30"/>
+        <rect x="90"  y="60"  width="30" height="30"/>
+        <rect x="120" y="60"  width="30" height="30"/>
+        <rect x="150" y="60"  width="30" height="30"/>
+        <rect x="180" y="60"  width="30" height="30"/>
+        <rect x="210" y="60"  width="30" height="30"/>
+
+        <!-- Row 3 -->
+        <rect x="0"   y="90"  width="30" height="30"/>
+        <rect x="30"  y="90"  width="30" height="30"/>
+        <rect x="60"  y="90"  width="30" height="30"/>
+        <rect x="90"  y="90"  width="30" height="30"/>
+        <rect x="120" y="90"  width="30" height="30"/>
+        <rect x="150" y="90"  width="30" height="30"/>
+        <rect x="180" y="90"  width="30" height="30"/>
+        <rect x="210" y="90"  width="30" height="30"/>
+
+        <!-- Row 4 -->
+        <rect x="0"   y="120" width="30" height="30"/>
+        <rect x="30"  y="120" width="30" height="30"/>
+        <rect x="60"  y="120" width="30" height="30"/>
+        <rect x="90"  y="120" width="30" height="30"/>
+        <rect x="120" y="120" width="30" height="30"/>
+        <rect x="150" y="120" width="30" height="30"/>
+        <rect x="180" y="120" width="30" height="30"/>
+        <rect x="210" y="120" width="30" height="30"/>
+
+        <!-- Row 5 -->
+        <rect x="0"   y="150" width="30" height="30"/>
+        <rect x="30"  y="150" width="30" height="30"/>
+        <rect x="60"  y="150" width="30" height="30"/>
+        <rect x="90"  y="150" width="30" height="30"/>
+        <rect x="120" y="150" width="30" height="30"/>
+        <rect x="150" y="150" width="30" height="30"/>
+        <rect x="180" y="150" width="30" height="30"/>
+        <rect x="210" y="150" width="30" height="30"/>
+
+        <!-- Row 6 -->
+        <rect x="0"   y="180" width="30" height="30"/>
+        <rect x="30"  y="180" width="30" height="30"/>
+        <rect x="60"  y="180" width="30" height="30"/>
+        <rect x="90"  y="180" width="30" height="30"/>
+        <rect x="120" y="180" width="30" height="30"/>
+        <rect x="150" y="180" width="30" height="30"/>
+        <rect x="180" y="180" width="30" height="30"/>
+        <rect x="210" y="180" width="30" height="30"/>
+
+        <!-- Row 7 -->
+        <rect x="0"   y="210" width="30" height="30"/>
+        <rect x="30"  y="210" width="30" height="30"/>
+        <rect x="60"  y="210" width="30" height="30"/>
+        <rect x="90"  y="210" width="30" height="30"/>
+        <rect x="120" y="210" width="30" height="30"/>
+        <rect x="150" y="210" width="30" height="30"/>
+        <rect x="180" y="210" width="30" height="30"/>
+        <rect x="210" y="210" width="30" height="30"/>
+    </g>
+
+    <!-- Blue grid lines on top -->
     <g fill="none" stroke="#1e90ff" stroke-width="2" shape-rendering="crispEdges">
         <!-- Vertical lines -->
         <line x1="0"   y1="0" x2="0"   y2="240"/>
