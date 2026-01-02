@@ -7,7 +7,6 @@
 - [ ] Add letterproof to `detype.nl`
 - [ ] Consider adding numbers
 - [ ] Consider adding Twig templates
-- [ ] Consider adding CakePHP templates
 
 # Done
 
@@ -37,3 +36,4 @@
 - [x] Sketch letter X
 - [x] Sketch letter Y
 - [x] Sketch letter Z
+- [x] Consider adding CakePHP templates
