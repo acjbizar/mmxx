@@ -1,6 +1,6 @@
 <svg xmlns="http://www.w3.org/2000/svg" width="240" height="240" viewBox="0 0 240 240">
     <!-- Background (initial square) -->
-    <rect x="0" y="0" width="240" height="240" fill="#fff"/>
+    
 
     <!-- 8×8 cells, each cell is 4 editable triangles (ids: r{row}c{col}-{top|right|bottom|left}) -->
     <g fill="#000" shape-rendering="crispEdges">
