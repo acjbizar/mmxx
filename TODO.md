@@ -2,7 +2,6 @@
 # TODO
 
 - [ ] Sketch letter Q
-- [ ] Sketch letter S
 - [ ] Sketch letter T
 - [ ] Sketch letter U
 - [ ] Sketch letter W
@@ -35,5 +34,6 @@
 - [x] Sketch letter O
 - [x] Sketch letter P
 - [x] Sketch letter R
+- [x] Sketch letter S
 - [x] Sketch letter V
 - [x] Sketch letter X
