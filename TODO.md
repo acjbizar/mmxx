@@ -7,7 +7,6 @@
 - [ ] Sketch letter O
 - [ ] Sketch letter P
 - [ ] Sketch letter Q
-- [ ] Sketch letter R
 - [ ] Sketch letter S
 - [ ] Sketch letter T
 - [ ] Sketch letter U
@@ -35,5 +34,6 @@
 - [x] Sketch letter I
 - [x] Sketch letter J
 - [x] Sketch letter M
+- [x] Sketch letter R
 - [x] Sketch letter V
 - [x] Sketch letter X
