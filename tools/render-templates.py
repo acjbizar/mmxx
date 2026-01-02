@@ -307,7 +307,7 @@ def main() -> None:
 
     src_dir = root / "tests"
     dst_twig_dir = root / "templates"
-    dst_php_dir = root / "templates" / "elements"
+    dst_php_dir = root / "templates" / "element"
 
     if not src_dir.is_dir():
         raise SystemExit(f"Source folder not found: {src_dir}")
