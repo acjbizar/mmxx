@@ -198,6 +198,11 @@ def unite_svg_polygons_to_one_path(svg_text: str, simplify_tolerance: float = 0.
     parser = etree.XMLParser(remove_blank_text=False, recover=True, remove_comments=True)
     root = etree.fromstring(svg_text.encode("utf-8"), parser=parser)
 
+    # default SVG namespace (if any)
+    svg_ns = root.nsmap.get(None)
+    def tag(local: str) -> str:
+        return f"{{{svg_ns}}}{local}" if svg_ns else local
+
     polygons = root.xpath('.//*[local-name()="polygon"]')
     if not polygons:
         return (svg_text, 0)
@@ -233,12 +238,11 @@ def unite_svg_polygons_to_one_path(svg_text: str, simplify_tolerance: float = 0.
         if parent is not None:
             parent.remove(p)
 
-    # insert one <path> into the first polygon's parent if possible
     parent_for_path = polygons[0].getparent() if polygons else None
 
-    path_el = etree.Element("path")
+    path_el = etree.Element(tag("path"))
     path_el.set("d", d)
-    path_el.set("fill-rule", "evenodd")  # holes/counters
+    path_el.set("fill-rule", "evenodd")
 
     if parent_for_path is None:
         root.append(path_el)
@@ -251,17 +255,10 @@ def unite_svg_polygons_to_one_path(svg_text: str, simplify_tolerance: float = 0.
 # --- Remove empty <g> elements ------------------------------------------------
 
 def remove_empty_groups(svg_text: str) -> Tuple[str, int]:
-    """
-    Removes <g> elements that have:
-      - no child elements
-      - no non-whitespace text
-    Repeats until stable (because removing inner groups can empty parent groups).
-    """
     parser = etree.XMLParser(remove_blank_text=False, recover=True, remove_comments=True)
     root = etree.fromstring(svg_text.encode("utf-8"), parser=parser)
 
     removed = 0
-
     while True:
         to_remove = []
         for g in root.xpath('.//*[local-name()="g"]'):
@@ -278,20 +275,39 @@ def remove_empty_groups(svg_text: str) -> Tuple[str, int]:
             parent = g.getparent()
             if parent is None:
                 continue
-
-            # preserve tail whitespace formatting
-            tail = g.tail
-            prev = g.getprevious()
-            if tail:
-                if prev is not None:
-                    prev.tail = (prev.tail or "") + tail
-                else:
-                    parent.text = (parent.text or "") + tail
-
             parent.remove(g)
             removed += 1
 
     return etree.tostring(root, encoding="unicode"), removed
+
+# --- Final normalize: remove root width/height + remove whitespace ------------
+
+def normalize_svg(svg_text: str) -> Tuple[str, int, int]:
+    """
+    Returns (svg_text, removed_width_height_count, removed_whitespace_nodes_count)
+    - Removes width/height attributes from root <svg>
+    - Strips whitespace-only text/tail nodes (minifies output)
+    """
+    parser = etree.XMLParser(remove_blank_text=True, recover=True, remove_comments=True)
+    root = etree.fromstring(svg_text.encode("utf-8"), parser=parser)
+
+    removed_dims = 0
+    for attr in ("width", "height"):
+        if attr in root.attrib:
+            del root.attrib[attr]
+            removed_dims += 1
+
+    removed_ws = 0
+    for el in root.iter():
+        if el.text is not None and el.text.strip() == "":
+            el.text = None
+            removed_ws += 1
+        if el.tail is not None and el.tail.strip() == "":
+            el.tail = None
+            removed_ws += 1
+
+    out = etree.tostring(root, encoding="unicode", pretty_print=False)
+    return out, removed_dims, removed_ws
 
 # --- File writing helper ------------------------------------------------------
 
@@ -325,6 +341,8 @@ def main() -> None:
     total_comments_removed = 0
     total_polys_united = 0
     total_groups_removed = 0
+    total_dims_removed = 0
+    total_ws_removed = 0
 
     for src in files:
         name = src.name
@@ -347,6 +365,9 @@ def main() -> None:
 
         cleaned, groups_removed = remove_empty_groups(cleaned)
 
+        # NEW: remove root width/height + strip whitespace
+        cleaned, dims_removed, ws_removed = normalize_svg(cleaned)
+
         dst_twig = dst_twig_dir / f"mmxx-{letter}.svg.twig"
         dst_php = dst_php_dir / f"mmxx-{letter}.php"
 
@@ -358,15 +379,19 @@ def main() -> None:
         total_comments_removed += comments_removed
         total_polys_united += poly_count
         total_groups_removed += groups_removed
+        total_dims_removed += dims_removed
+        total_ws_removed += ws_removed
 
-        print(f"{src} -> {dst_twig} (bg {bg_removed}, comments {comments_removed}, polys {poly_count}, empty-g {groups_removed})")
-        print(f"{src} -> {dst_php} (bg {bg_removed}, comments {comments_removed}, polys {poly_count}, empty-g {groups_removed})")
+        print(f"{src} -> {dst_twig} (bg {bg_removed}, comments {comments_removed}, polys {poly_count}, empty-g {groups_removed}, dims {dims_removed}, ws {ws_removed})")
+        print(f"{src} -> {dst_php} (bg {bg_removed}, comments {comments_removed}, polys {poly_count}, empty-g {groups_removed}, dims {dims_removed}, ws {ws_removed})")
 
     print(f"\nDone. Processed {processed} file(s).")
     print(f"Removed {total_bg_removed} background rect(s) total.")
     print(f"Removed {total_comments_removed} comment(s) total.")
     print(f"United {total_polys_united} polygon(s) total into single-path shapes.")
     print(f"Removed {total_groups_removed} empty group(s) total.")
+    print(f"Removed {total_dims_removed} root width/height attribute(s) total.")
+    print(f"Removed {total_ws_removed} whitespace node(s) total.")
 
 if __name__ == "__main__":
     main()

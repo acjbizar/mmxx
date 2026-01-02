@@ -1,7 +1,6 @@
 
 # TODO
 
-- [ ] Minify shapes
 - [ ] Turn shapes into font
 - [ ] Add letterproof
 - [ ] Add letterproof to `detype.nl`
@@ -36,4 +35,5 @@
 - [x] Sketch letter X
 - [x] Sketch letter Y
 - [x] Sketch letter Z
+- [x] Minify shapes
 - [x] Consider adding CakePHP templates
