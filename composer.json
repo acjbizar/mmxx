@@ -1,0 +1,9 @@
+{
+  "name": "acj/mmxx",
+  "type": "cakephp-plugin",
+  "autoload": {
+    "psr-4": {
+      "Mmxx\\": "src/"
+    }
+  }
+}
