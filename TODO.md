@@ -1,7 +1,6 @@
 
 # TODO
 
-- [ ] Sketch letter B
 - [ ] Sketch letter C
 - [ ] Sketch letter D
 - [ ] Sketch letter E
@@ -25,10 +24,12 @@
 - [ ] Turn shapes into font
 - [ ] Add letterproof
 - [ ] Add letterproof to `detype.nl`
+- [ ] Consider adding numbers
 
 # Done
 
 - [x] Sketch letter A
+- [x] Sketch letter B
 - [x] Sketch letter H
 - [x] Sketch letter I
 - [x] Sketch letter M
