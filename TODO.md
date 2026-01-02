@@ -1,7 +1,6 @@
 
 # TODO
 
-- [ ] Sketch letter D
 - [ ] Sketch letter E
 - [ ] Sketch letter F
 - [ ] Sketch letter G
@@ -30,6 +29,7 @@
 - [x] Sketch letter A
 - [x] Sketch letter B
 - [x] Sketch letter C
+- [x] Sketch letter D
 - [x] Sketch letter H
 - [x] Sketch letter I
 - [x] Sketch letter M
