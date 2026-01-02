@@ -230,10 +230,12 @@
         <polygon id="r6c6-right" points="210,180 210,210 195,195"/>
         <polygon id="r6c6-bottom" points="210,210 180,210 195,195"/>
         <polygon id="r6c6-left" points="180,210 180,180 195,195"/>
+<!--
         <polygon id="r6c7-top" points="210,180 240,180 225,195"/>
         <polygon id="r6c7-right" points="240,180 240,210 225,195"/>
         <polygon id="r6c7-bottom" points="240,210 210,210 225,195"/>
         <polygon id="r6c7-left" points="210,210 210,180 225,195"/>
+-->
 
         <polygon id="r7c0-top" points="0,210 30,210 15,225"/>
         <polygon id="r7c0-right" points="30,210 30,240 15,225"/>
@@ -263,9 +265,11 @@
         <polygon id="r7c6-right" points="210,210 210,240 195,225"/>
         <polygon id="r7c6-bottom" points="210,240 180,240 195,225"/>
         <polygon id="r7c6-left" points="180,240 180,210 195,225"/>
+<!--
         <polygon id="r7c7-top" points="210,210 240,210 225,225"/>
         <polygon id="r7c7-right" points="240,210 240,240 225,225"/>
         <polygon id="r7c7-bottom" points="240,240 210,240 225,225"/>
         <polygon id="r7c7-left" points="210,240 210,210 225,225"/>
+-->
     </g>
 </svg>
