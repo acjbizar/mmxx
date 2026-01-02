@@ -7,7 +7,15 @@ from lxml import etree  # py -m pip install lxml
 from shapely.geometry import Polygon, MultiPolygon
 from shapely.ops import unary_union  # py -m pip install shapely
 
-# --- Background-rect stripping (same idea as before) --------------------------
+# --- Comment stripping --------------------------------------------------------
+
+COMMENT_RE = re.compile(r"<!--.*?-->", re.DOTALL)
+
+def strip_svg_comments(svg_text: str) -> Tuple[str, int]:
+    new_text, n = COMMENT_RE.subn("", svg_text)
+    return new_text, n
+
+# --- Background-rect stripping ------------------------------------------------
 
 RECT_SELF_CLOSING_RE = re.compile(r"<rect\b[^>]*?/>", re.IGNORECASE | re.DOTALL)
 RECT_OPEN_CLOSE_RE   = re.compile(r"<rect\b[^>]*?>.*?</rect\s*>", re.IGNORECASE | re.DOTALL)
@@ -122,7 +130,6 @@ def strip_large_white_square(svg_text: str) -> Tuple[str, int]:
 # --- Polygon union ("Illustrator Unite") --------------------------------------
 
 def _parse_points(points_str: str) -> List[Tuple[float, float]]:
-    # robust: works with commas/spaces/newlines
     nums = re.findall(r"[-+]?\d*\.?\d+(?:[eE][-+]?\d+)?", points_str or "")
     if len(nums) < 6 or (len(nums) % 2) != 0:
         return []
@@ -134,7 +141,6 @@ def _parse_points(points_str: str) -> List[Tuple[float, float]]:
     return coords
 
 def _fmt_num(x: float, snap_eps: float = 1e-6, max_decimals: int = 3) -> str:
-    # snap near-integers to ints (keeps your grid crisp)
     rx = round(x)
     if abs(x - rx) <= snap_eps:
         return str(int(rx))
@@ -145,7 +151,6 @@ def _ring_to_path(coords, snap_eps: float, max_decimals: int) -> str:
     coords = list(coords)
     if len(coords) < 4:
         return ""
-    # shapely rings are closed: last == first; drop the last
     if coords[0] == coords[-1]:
         coords = coords[:-1]
     if not coords:
@@ -157,15 +162,12 @@ def _ring_to_path(coords, snap_eps: float, max_decimals: int) -> str:
     return " ".join(parts)
 
 def _geom_to_single_path_d(geom, snap_eps: float = 1e-6, max_decimals: int = 3) -> str:
-    # Returns one "d" string, potentially with multiple subpaths (still one <path> element)
     paths = []
 
     def add_polygon(poly: Polygon):
-        # exterior
         ext = _ring_to_path(poly.exterior.coords, snap_eps, max_decimals)
         if ext:
             paths.append(ext)
-        # holes
         for interior in poly.interiors:
             hole = _ring_to_path(interior.coords, snap_eps, max_decimals)
             if hole:
@@ -180,7 +182,6 @@ def _geom_to_single_path_d(geom, snap_eps: float = 1e-6, max_decimals: int = 3) 
         for p in geom.geoms:
             add_polygon(p)
     else:
-        # GeometryCollection etc: keep polygonal parts
         try:
             for g in geom.geoms:
                 if isinstance(g, Polygon):
@@ -194,14 +195,9 @@ def _geom_to_single_path_d(geom, snap_eps: float = 1e-6, max_decimals: int = 3) 
     return " ".join(paths)
 
 def unite_svg_polygons_to_one_path(svg_text: str, simplify_tolerance: float = 0.0) -> Tuple[str, int]:
-    """
-    Finds all <polygon> elements, unions them, replaces them with a single <path>.
-    Returns (new_svg_text, polygons_consumed_count)
-    """
-    parser = etree.XMLParser(remove_blank_text=False, recover=True)
+    parser = etree.XMLParser(remove_blank_text=False, recover=True, remove_comments=True)
     root = etree.fromstring(svg_text.encode("utf-8"), parser=parser)
 
-    # find all polygons anywhere
     polygons = root.xpath('.//*[local-name()="polygon"]')
     if not polygons:
         return (svg_text, 0)
@@ -214,7 +210,6 @@ def unite_svg_polygons_to_one_path(svg_text: str, simplify_tolerance: float = 0.
         try:
             poly = Polygon(pts)
             if not poly.is_valid:
-                # typical fix for minor self-intersections
                 poly = poly.buffer(0)
             if not poly.is_empty:
                 shp_polys.append(poly)
@@ -225,7 +220,6 @@ def unite_svg_polygons_to_one_path(svg_text: str, simplify_tolerance: float = 0.
         return (svg_text, 0)
 
     unioned = unary_union(shp_polys)
-
     if simplify_tolerance and simplify_tolerance > 0:
         unioned = unioned.simplify(simplify_tolerance, preserve_topology=True)
 
@@ -233,24 +227,18 @@ def unite_svg_polygons_to_one_path(svg_text: str, simplify_tolerance: float = 0.
     if not d:
         return (svg_text, 0)
 
-    # Remove all original polygons
+    # remove original polygons
     for p in polygons:
         parent = p.getparent()
         if parent is not None:
             parent.remove(p)
 
-    # Add ONE path element.
-    # Put it into the first polygon's former parent if possible, otherwise append to root.
-    parent_for_path = None
-    try:
-        parent_for_path = polygons[0].getparent()
-    except Exception:
-        parent_for_path = None
+    # insert one <path> into the first polygon's parent if possible
+    parent_for_path = polygons[0].getparent() if polygons else None
 
     path_el = etree.Element("path")
     path_el.set("d", d)
-    path_el.set("fill-rule", "evenodd")  # makes holes reliable
-    # No explicit fill: it will inherit from <g fill="#000"> if that exists.
+    path_el.set("fill-rule", "evenodd")  # holes/counters
 
     if parent_for_path is None:
         root.append(path_el)
@@ -260,7 +248,52 @@ def unite_svg_polygons_to_one_path(svg_text: str, simplify_tolerance: float = 0.
     out = etree.tostring(root, encoding="unicode")
     return (out, len(polygons))
 
-# --- File writing helper (LF newlines even on Windows) ------------------------
+# --- Remove empty <g> elements ------------------------------------------------
+
+def remove_empty_groups(svg_text: str) -> Tuple[str, int]:
+    """
+    Removes <g> elements that have:
+      - no child elements
+      - no non-whitespace text
+    Repeats until stable (because removing inner groups can empty parent groups).
+    """
+    parser = etree.XMLParser(remove_blank_text=False, recover=True, remove_comments=True)
+    root = etree.fromstring(svg_text.encode("utf-8"), parser=parser)
+
+    removed = 0
+
+    while True:
+        to_remove = []
+        for g in root.xpath('.//*[local-name()="g"]'):
+            if len(g) != 0:
+                continue
+            if (g.text or "").strip():
+                continue
+            to_remove.append(g)
+
+        if not to_remove:
+            break
+
+        for g in to_remove:
+            parent = g.getparent()
+            if parent is None:
+                continue
+
+            # preserve tail whitespace formatting
+            tail = g.tail
+            prev = g.getprevious()
+            if tail:
+                if prev is not None:
+                    prev.tail = (prev.tail or "") + tail
+                else:
+                    parent.text = (parent.text or "") + tail
+
+            parent.remove(g)
+            removed += 1
+
+    return etree.tostring(root, encoding="unicode"), removed
+
+# --- File writing helper ------------------------------------------------------
 
 def _write_text_lf(path: Path, text: str) -> None:
     text = text.replace("\r\n", "\n").replace("\r", "\n")
@@ -289,7 +322,9 @@ def main() -> None:
 
     processed = 0
     total_bg_removed = 0
+    total_comments_removed = 0
     total_polys_united = 0
+    total_groups_removed = 0
 
     for src in files:
         name = src.name
@@ -303,12 +338,14 @@ def main() -> None:
         svg_text = src.read_text(encoding="utf-8")
 
         cleaned, bg_removed = strip_large_white_square(svg_text)
+        cleaned, comments_removed = strip_svg_comments(cleaned)
 
-        # Unite polygons into one path (Illustrator “Unite”)
         cleaned, poly_count = unite_svg_polygons_to_one_path(
             cleaned,
-            simplify_tolerance=0.0,  # set e.g. 0.25 if you want fewer points
+            simplify_tolerance=0.0,  # try 0.25 if you want fewer points
         )
+
+        cleaned, groups_removed = remove_empty_groups(cleaned)
 
         dst_twig = dst_twig_dir / f"mmxx-{letter}.svg.twig"
         dst_php = dst_php_dir / f"mmxx-{letter}.php"
@@ -318,14 +355,18 @@ def main() -> None:
 
         processed += 1
         total_bg_removed += bg_removed
+        total_comments_removed += comments_removed
         total_polys_united += poly_count
+        total_groups_removed += groups_removed
 
-        print(f"{src} -> {dst_twig} (bg rect removed {bg_removed}, polygons united {poly_count})")
-        print(f"{src} -> {dst_php} (bg rect removed {bg_removed}, polygons united {poly_count})")
+        print(f"{src} -> {dst_twig} (bg {bg_removed}, comments {comments_removed}, polys {poly_count}, empty-g {groups_removed})")
+        print(f"{src} -> {dst_php} (bg {bg_removed}, comments {comments_removed}, polys {poly_count}, empty-g {groups_removed})")
 
     print(f"\nDone. Processed {processed} file(s).")
     print(f"Removed {total_bg_removed} background rect(s) total.")
+    print(f"Removed {total_comments_removed} comment(s) total.")
     print(f"United {total_polys_united} polygon(s) total into single-path shapes.")
+    print(f"Removed {total_groups_removed} empty group(s) total.")
 
 if __name__ == "__main__":
     main()
