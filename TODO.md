@@ -2,8 +2,6 @@
 # TODO
 
 - [ ] Sketch letter Q
-- [ ] Sketch letter W
-- [ ] Sketch letter Y
 - [ ] Sketch letter Z
 - [ ] Minify shapes
 - [ ] Turn shapes into font
@@ -36,4 +34,6 @@
 - [x] Sketch letter T
 - [x] Sketch letter U
 - [x] Sketch letter V
+- [x] Sketch letter W
 - [x] Sketch letter X
+- [x] Sketch letter Y
