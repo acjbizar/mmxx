@@ -1,26 +1,36 @@
 #!/usr/bin/env python3
 from pathlib import Path
+import argparse
 import re
+import shutil
+import subprocess
+import tempfile
 from typing import Optional, Tuple, Dict, List
 
 from lxml import etree  # py -m pip install lxml
 from shapely.geometry import Polygon, MultiPolygon
 from shapely.ops import unary_union  # py -m pip install shapely
 
-# --- Comment stripping --------------------------------------------------------
+# Optional CairoSVG backend
+try:
+    import cairosvg  # py -m pip install cairosvg
+except Exception:
+    cairosvg = None
+
+
+# -------------------- SVG CLEANUP (same as template script) -------------------
 
 COMMENT_RE = re.compile(r"<!--.*?-->", re.DOTALL)
-
-def strip_svg_comments(svg_text: str) -> Tuple[str, int]:
-    new_text, n = COMMENT_RE.subn("", svg_text)
-    return new_text, n
-
-# --- Background-rect stripping ------------------------------------------------
 
 RECT_SELF_CLOSING_RE = re.compile(r"<rect\b[^>]*?/>", re.IGNORECASE | re.DOTALL)
 RECT_OPEN_CLOSE_RE   = re.compile(r"<rect\b[^>]*?>.*?</rect\s*>", re.IGNORECASE | re.DOTALL)
 SVG_TAG_RE           = re.compile(r"<svg\b[^>]*>", re.IGNORECASE | re.DOTALL)
 ATTR_RE              = re.compile(r'(\w+)\s*=\s*(["\'])(.*?)\2', re.DOTALL)
+
+VIEWBOX_RE = re.compile(r'\bviewBox\s*=\s*["\']([^"\']+)["\']', re.IGNORECASE)
+WIDTH_RE   = re.compile(r'\bwidth\s*=\s*["\']([^"\']+)["\']', re.IGNORECASE)
+HEIGHT_RE  = re.compile(r'\bheight\s*=\s*["\']([^"\']+)["\']', re.IGNORECASE)
+
 
 def _to_float(value: str) -> Optional[float]:
     if value is None:
@@ -33,8 +43,15 @@ def _to_float(value: str) -> Optional[float]:
     except ValueError:
         return None
 
+
+def strip_svg_comments(svg_text: str) -> Tuple[str, int]:
+    new_text, n = COMMENT_RE.subn("", svg_text)
+    return new_text, n
+
+
 def _parse_attrs(tag_text: str) -> Dict[str, str]:
     return {k: v for (k, _, v) in ATTR_RE.findall(tag_text)}
+
 
 def _extract_canvas_size(svg_text: str) -> Tuple[Optional[float], Optional[float]]:
     m = SVG_TAG_RE.search(svg_text)
@@ -60,6 +77,7 @@ def _extract_canvas_size(svg_text: str) -> Tuple[Optional[float], Optional[float
 
     return (None, None)
 
+
 def _is_white_fill(attrs: Dict[str, str]) -> bool:
     fill = (attrs.get("fill") or "").strip().lower()
 
@@ -81,6 +99,7 @@ def _is_white_fill(attrs: Dict[str, str]) -> bool:
             return True
 
     return False
+
 
 def _is_full_background_rect(tag_text: str, canvas_w: Optional[float], canvas_h: Optional[float]) -> bool:
     attrs = _parse_attrs(tag_text)
@@ -106,6 +125,7 @@ def _is_full_background_rect(tag_text: str, canvas_w: Optional[float], canvas_h:
         abs(h - canvas_h) < eps
     )
 
+
 def strip_large_white_square(svg_text: str) -> Tuple[str, int]:
     canvas_w, canvas_h = _extract_canvas_size(svg_text)
     removed = 0
@@ -127,7 +147,6 @@ def strip_large_white_square(svg_text: str) -> Tuple[str, int]:
     svg_text = _remove_matches(RECT_SELF_CLOSING_RE, svg_text)
     return svg_text, removed
 
-# --- Polygon union ("Illustrator Unite") --------------------------------------
 
 def _parse_points(points_str: str) -> List[Tuple[float, float]]:
     nums = re.findall(r"[-+]?\d*\.?\d+(?:[eE][-+]?\d+)?", points_str or "")
@@ -140,12 +159,14 @@ def _parse_points(points_str: str) -> List[Tuple[float, float]]:
         coords.append((float(x), float(y)))
     return coords
 
+
 def _fmt_num(x: float, snap_eps: float = 1e-6, max_decimals: int = 3) -> str:
     rx = round(x)
     if abs(x - rx) <= snap_eps:
         return str(int(rx))
     s = f"{x:.{max_decimals}f}".rstrip("0").rstrip(".")
     return s if s else "0"
+
 
 def _ring_to_path(coords, snap_eps: float, max_decimals: int) -> str:
     coords = list(coords)
@@ -161,8 +182,9 @@ def _ring_to_path(coords, snap_eps: float, max_decimals: int) -> str:
     parts.append("Z")
     return " ".join(parts)
 
+
 def _geom_to_single_path_d(geom, snap_eps: float = 1e-6, max_decimals: int = 3) -> str:
-    paths = []
+    paths: List[str] = []
 
     def add_polygon(poly: Polygon):
         ext = _ring_to_path(poly.exterior.coords, snap_eps, max_decimals)
@@ -194,11 +216,13 @@ def _geom_to_single_path_d(geom, snap_eps: float = 1e-6, max_decimals: int = 3) 
 
     return " ".join(paths)
 
+
 def unite_svg_polygons_to_one_path(svg_text: str, simplify_tolerance: float = 0.0) -> Tuple[str, int]:
     parser = etree.XMLParser(remove_blank_text=False, recover=True, remove_comments=True)
     root = etree.fromstring(svg_text.encode("utf-8"), parser=parser)
 
     svg_ns = root.nsmap.get(None)
+
     def tag(local: str) -> str:
         return f"{{{svg_ns}}}{local}" if svg_ns else local
 
@@ -249,7 +273,6 @@ def unite_svg_polygons_to_one_path(svg_text: str, simplify_tolerance: float = 0.
 
     return etree.tostring(root, encoding="unicode"), len(polygons)
 
-# --- Remove empty <g> elements ------------------------------------------------
 
 def remove_empty_groups(svg_text: str) -> Tuple[str, int]:
     parser = etree.XMLParser(remove_blank_text=False, recover=True, remove_comments=True)
@@ -277,109 +300,214 @@ def remove_empty_groups(svg_text: str) -> Tuple[str, int]:
 
     return etree.tostring(root, encoding="unicode"), removed
 
-# --- Final normalize: remove root width/height + remove whitespace ------------
 
-def normalize_svg(svg_text: str) -> Tuple[str, int, int]:
+def normalize_svg(svg_text: str) -> str:
     parser = etree.XMLParser(remove_blank_text=True, recover=True, remove_comments=True)
     root = etree.fromstring(svg_text.encode("utf-8"), parser=parser)
 
-    removed_dims = 0
     for attr in ("width", "height"):
         if attr in root.attrib:
             del root.attrib[attr]
-            removed_dims += 1
 
-    removed_ws = 0
     for el in root.iter():
         if el.text is not None and el.text.strip() == "":
             el.text = None
-            removed_ws += 1
         if el.tail is not None and el.tail.strip() == "":
             el.tail = None
-            removed_ws += 1
 
-    out = etree.tostring(root, encoding="unicode", pretty_print=False)
-    return out, removed_dims, removed_ws
+    return etree.tostring(root, encoding="unicode", pretty_print=False)
 
-# --- File writing helper ------------------------------------------------------
 
-def _write_text_lf(path: Path, text: str) -> None:
-    text = text.replace("\r\n", "\n").replace("\r", "\n")
-    with path.open("w", encoding="utf-8", newline="\n") as f:
-        f.write(text)
+def cleanup_svg(svg_text: str) -> str:
+    cleaned, _ = strip_large_white_square(svg_text)
+    cleaned, _ = strip_svg_comments(cleaned)
+    cleaned, _ = unite_svg_polygons_to_one_path(cleaned, simplify_tolerance=0.0)
+    cleaned, _ = remove_empty_groups(cleaned)
+    cleaned = normalize_svg(cleaned)
+    return cleaned
 
-# --- Main --------------------------------------------------------------------
+
+# -------------------- SVG SIZE / PNG RENDER ----------------------------------
+
+def _get_svg_size(svg_text: str) -> Tuple[int, int]:
+    m = VIEWBOX_RE.search(svg_text)
+    if m:
+        parts = re.split(r"[,\s]+", m.group(1).strip())
+        if len(parts) == 4:
+            w = _to_float(parts[2])
+            h = _to_float(parts[3])
+            if w and h and w > 0 and h > 0:
+                return int(round(w)), int(round(h))
+
+    mw = WIDTH_RE.search(svg_text)
+    mh = HEIGHT_RE.search(svg_text)
+    if mw and mh:
+        w = _to_float(mw.group(1))
+        h = _to_float(mh.group(1))
+        if w and h and w > 0 and h > 0:
+            return int(round(w)), int(round(h))
+
+    return 240, 240
+
+
+def _render_with_cairosvg(svg_text: str, out_png: Path, out_w: int, out_h: int) -> bool:
+    if cairosvg is None:
+        return False
+    cairosvg.svg2png(
+        bytestring=svg_text.encode("utf-8"),
+        write_to=str(out_png),
+        output_width=out_w,
+        output_height=out_h,
+    )
+    return True
+
+
+def _render_with_inkscape(svg_text: str, out_png: Path, out_w: int, out_h: int) -> bool:
+    inkscape = shutil.which("inkscape")
+    if not inkscape:
+        return False
+
+    fd, tmp_svg = tempfile.mkstemp(suffix=".svg")
+    try:
+        with open(fd, "w", encoding="utf-8", newline="\n") as f:
+            f.write(svg_text)
+
+        cmd = [
+            inkscape,
+            tmp_svg,
+            "--export-type=png",
+            f"--export-filename={str(out_png)}",
+            "--export-area-page",
+            f"--export-width={out_w}",
+            f"--export-height={out_h}",
+        ]
+        try:
+            subprocess.run(cmd, check=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+            return True
+        except Exception:
+            cmd_old = [
+                inkscape,
+                tmp_svg,
+                f"--export-png={str(out_png)}",
+                "--export-area-page",
+                f"--export-width={out_w}",
+                f"--export-height={out_h}",
+            ]
+            subprocess.run(cmd_old, check=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+            return True
+    finally:
+        try:
+            Path(tmp_svg).unlink(missing_ok=True)
+        except Exception:
+            pass
+
+
+def _render_with_rsvg(svg_text: str, out_png: Path, out_w: int, out_h: int) -> bool:
+    rsvg = shutil.which("rsvg-convert")
+    if not rsvg:
+        return False
+
+    fd, tmp_svg = tempfile.mkstemp(suffix=".svg")
+    try:
+        with open(fd, "w", encoding="utf-8", newline="\n") as f:
+            f.write(svg_text)
+
+        cmd = [rsvg, "-o", str(out_png), "-w", str(out_w), "-h", str(out_h), tmp_svg]
+        subprocess.run(cmd, check=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+        return True
+    finally:
+        try:
+            Path(tmp_svg).unlink(missing_ok=True)
+        except Exception:
+            pass
+
+
+def render_png(svg_text: str, out_png: Path, out_w: int, out_h: int) -> str:
+    out_png.parent.mkdir(parents=True, exist_ok=True)
+
+    if _render_with_cairosvg(svg_text, out_png, out_w, out_h):
+        return "cairosvg"
+    if _render_with_inkscape(svg_text, out_png, out_w, out_h):
+        return "inkscape"
+    if _render_with_rsvg(svg_text, out_png, out_w, out_h):
+        return "rsvg-convert"
+
+    raise RuntimeError(
+        "No renderer available. Install one of:\n"
+        "  - CairoSVG:  py -m pip install cairosvg\n"
+        "  - Inkscape (and ensure `inkscape` is on PATH)\n"
+        "  - rsvg-convert (librsvg) (and ensure it is on PATH)\n"
+    )
+
+
+# --------------------------------- MAIN --------------------------------------
 
 def main() -> None:
-    root = Path(__file__).resolve().parent.parent
+    ap = argparse.ArgumentParser(description="Render tests/sketch-*.svg to dist/mmxx-*.png and dist/instagram/mmxx-*.png (1080x1080)")
+    ap.add_argument("--scale", type=float, default=1.0, help="Scale factor applied to viewBox size for dist/ (default: 1.0)")
+    ap.add_argument("--size", type=int, default=0, help="Force square size for dist/ (e.g. 512). Overrides --scale if set.")
+    ap.add_argument("--no-clean", action="store_true", help="Render raw SVGs without cleanup/simplification.")
+    ap.add_argument("--instagram", action="store_true", default=True, help="Also render 1080x1080 to dist/instagram (default: on).")
+    ap.add_argument("--no-instagram", dest="instagram", action="store_false", help="Disable dist/instagram output.")
+    ap.add_argument("--ig-size", type=int, default=1080, help="Instagram output size (default: 1080).")
+    args = ap.parse_args()
 
+    root = Path(__file__).resolve().parent.parent  # tools/ -> project root
     src_dir = root / "tests"
-    dst_twig_dir = root / "templates"
-    dst_element_dir = root / "templates" / "element"  # <-- changed here
-
-    if not src_dir.is_dir():
-        raise SystemExit(f"Source folder not found: {src_dir}")
-
-    dst_twig_dir.mkdir(parents=True, exist_ok=True)
-    dst_element_dir.mkdir(parents=True, exist_ok=True)
+    dist_dir = root / "dist"
+    ig_dir = dist_dir / "instagram"
 
     files = sorted(src_dir.glob("sketch-*.svg"))
     if not files:
-        print(f"No files found matching {src_dir / 'sketch-*.svg'}")
+        print(f"No files found matching: {src_dir / 'sketch-*.svg'}")
         return
 
-    processed = 0
-    total_bg_removed = 0
-    total_comments_removed = 0
-    total_polys_united = 0
-    total_groups_removed = 0
-    total_dims_removed = 0
-    total_ws_removed = 0
+    dist_dir.mkdir(parents=True, exist_ok=True)
+    if args.instagram:
+        ig_dir.mkdir(parents=True, exist_ok=True)
 
-    for src in files:
-        name = src.name
-        if not (name.startswith("sketch-") and name.endswith(".svg")):
-            continue
+    rendered_main = 0
+    rendered_ig = 0
 
-        letter = name[len("sketch-") : -len(".svg")]
+    for f in files:
+        name = f.name  # sketch-A.svg
+        letter = name[len("sketch-") : -len(".svg")] if name.startswith("sketch-") and name.endswith(".svg") else None
         if not letter:
             continue
 
-        svg_text = src.read_text(encoding="utf-8")
+        svg_text = f.read_text(encoding="utf-8")
+        if not args.no_clean:
+            svg_text = cleanup_svg(svg_text)
 
-        cleaned, bg_removed = strip_large_white_square(svg_text)
-        cleaned, comments_removed = strip_svg_comments(cleaned)
-        cleaned, poly_count = unite_svg_polygons_to_one_path(cleaned, simplify_tolerance=0.0)
-        cleaned, groups_removed = remove_empty_groups(cleaned)
-        cleaned, dims_removed, ws_removed = normalize_svg(cleaned)
+        base_w, base_h = _get_svg_size(svg_text)
 
-        dst_twig = dst_twig_dir / f"mmxx-{letter}.svg.twig"
-        dst_php  = dst_element_dir / f"mmxx-{letter}.php"  # <-- changed here
+        # Main dist output
+        if args.size and args.size > 0:
+            out_w = out_h = int(args.size)
+        else:
+            out_w = max(1, int(round(base_w * args.scale)))
+            out_h = max(1, int(round(base_h * args.scale)))
 
-        _write_text_lf(dst_twig, cleaned)
-        _write_text_lf(dst_php, cleaned)
+        out_png = dist_dir / f"mmxx-{letter}.png"
+        method = render_png(svg_text, out_png, out_w, out_h)
+        rendered_main += 1
 
-        processed += 1
-        total_bg_removed += bg_removed
-        total_comments_removed += comments_removed
-        total_polys_united += poly_count
-        total_groups_removed += groups_removed
-        total_dims_removed += dims_removed
-        total_ws_removed += ws_removed
+        msg = f"{f} -> {out_png} ({out_w}x{out_h}, {method})"
 
-        print(
-            f"{src} -> {dst_twig} / {dst_php} "
-            f"(bg {bg_removed}, comments {comments_removed}, polys {poly_count}, "
-            f"empty-g {groups_removed}, dims {dims_removed}, ws {ws_removed})"
-        )
+        # Instagram output (forced square)
+        if args.instagram:
+            ig_png = ig_dir / f"mmxx-{letter}.png"
+            ig_method = render_png(svg_text, ig_png, int(args.ig_size), int(args.ig_size))
+            rendered_ig += 1
+            msg += f" | IG -> {ig_png} ({args.ig_size}x{args.ig_size}, {ig_method})"
 
-    print(f"\nDone. Processed {processed} file(s).")
-    print(f"Removed {total_bg_removed} background rect(s) total.")
-    print(f"Removed {total_comments_removed} comment(s) total.")
-    print(f"United {total_polys_united} polygon(s) total into single-path shapes.")
-    print(f"Removed {total_groups_removed} empty group(s) total.")
-    print(f"Removed {total_dims_removed} root width/height attribute(s) total.")
-    print(f"Removed {total_ws_removed} whitespace node(s) total.")
+        print(msg)
+
+    print(f"\nDone.")
+    print(f"Rendered {rendered_main} PNG(s) to {dist_dir}.")
+    if args.instagram:
+        print(f"Rendered {rendered_ig} PNG(s) to {ig_dir}.")
+
 
 if __name__ == "__main__":
     main()
