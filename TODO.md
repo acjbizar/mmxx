@@ -1,7 +1,6 @@
 
 # TODO
 
-- [ ] Sketch letter E
 - [ ] Sketch letter F
 - [ ] Sketch letter G
 - [ ] Sketch letter J
@@ -23,6 +22,8 @@
 - [ ] Add letterproof
 - [ ] Add letterproof to `detype.nl`
 - [ ] Consider adding numbers
+- [ ] Consider adding Twig templates
+- [ ] Consider adding CakePHP templates
 
 # Done
 
@@ -30,6 +31,7 @@
 - [x] Sketch letter B
 - [x] Sketch letter C
 - [x] Sketch letter D
+- [x] Sketch letter E
 - [x] Sketch letter H
 - [x] Sketch letter I
 - [x] Sketch letter M
