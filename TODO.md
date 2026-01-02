@@ -2,7 +2,6 @@
 # TODO
 
 - [ ] Sketch letter Q
-- [ ] Sketch letter Z
 - [ ] Minify shapes
 - [ ] Turn shapes into font
 - [ ] Add letterproof
@@ -37,3 +36,4 @@
 - [x] Sketch letter W
 - [x] Sketch letter X
 - [x] Sketch letter Y
+- [x] Sketch letter Z
