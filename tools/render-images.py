@@ -443,7 +443,7 @@ def render_png(svg_text: str, out_png: Path, out_w: int, out_h: int) -> str:
 # --------------------------------- MAIN --------------------------------------
 
 def main() -> None:
-    ap = argparse.ArgumentParser(description="Render tests/sketch-*.svg to dist/mmxx-*.png and dist/instagram/mmxx-*.png (1080x1080)")
+    ap = argparse.ArgumentParser(description="Render src/character-*.svg to dist/mmxx-*.png and dist/images/instagram/mmxx-*.png (1080x1080)")
     ap.add_argument("--scale", type=float, default=1.0, help="Scale factor applied to viewBox size for dist/ (default: 1.0)")
     ap.add_argument("--size", type=int, default=0, help="Force square size for dist/ (e.g. 512). Overrides --scale if set.")
     ap.add_argument("--no-clean", action="store_true", help="Render raw SVGs without cleanup/simplification.")
@@ -453,13 +453,13 @@ def main() -> None:
     args = ap.parse_args()
 
     root = Path(__file__).resolve().parent.parent  # tools/ -> project root
-    src_dir = root / "tests"
-    dist_dir = root / "dist"
+    src_dir = root / "src"
+    dist_dir = root / "dist/images"
     ig_dir = dist_dir / "instagram"
 
-    files = sorted(src_dir.glob("sketch-*.svg"))
+    files = sorted(src_dir.glob("character-*.svg"))
     if not files:
-        print(f"No files found matching: {src_dir / 'sketch-*.svg'}")
+        print(f"No files found matching: {src_dir / 'character-*.svg'}")
         return
 
     dist_dir.mkdir(parents=True, exist_ok=True)
@@ -470,8 +470,8 @@ def main() -> None:
     rendered_ig = 0
 
     for f in files:
-        name = f.name  # sketch-A.svg
-        letter = name[len("sketch-") : -len(".svg")] if name.startswith("sketch-") and name.endswith(".svg") else None
+        name = f.name  # character-A.svg
+        letter = name[len("character-") : -len(".svg")] if name.startswith("character-") and name.endswith(".svg") else None
         if not letter:
             continue
 
