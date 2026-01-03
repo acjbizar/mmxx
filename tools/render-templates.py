@@ -323,9 +323,11 @@ def main() -> None:
     dst_twig_dir.mkdir(parents=True, exist_ok=True)
     dst_element_dir.mkdir(parents=True, exist_ok=True)
 
-    files = sorted(src_dir.glob("character-*.svg"))
-    if not files:
-        print(f"No files found matching {src_dir / 'character-*.svg'}")
+    char_files = sorted(src_dir.glob("character-*.svg"))
+    logo_file = src_dir / "logo.svg"
+
+    if not char_files and not logo_file.is_file():
+        print(f"No files found matching {src_dir / 'character-*.svg'} and no {logo_file}")
         return
 
     processed = 0
@@ -336,14 +338,10 @@ def main() -> None:
     total_dims_removed = 0
     total_ws_removed = 0
 
-    for src in files:
-        name = src.name
-        if not (name.startswith("character-") and name.endswith(".svg")):
-            continue
-
-        letter = name[len("character-") : -len(".svg")]
-        if not letter:
-            continue
+    def process_one(src: Path, key: str) -> None:
+        nonlocal processed
+        nonlocal total_bg_removed, total_comments_removed, total_polys_united
+        nonlocal total_groups_removed, total_dims_removed, total_ws_removed
 
         svg_text = src.read_text(encoding="utf-8")
 
@@ -353,8 +351,8 @@ def main() -> None:
         cleaned, groups_removed = remove_empty_groups(cleaned)
         cleaned, dims_removed, ws_removed = normalize_svg(cleaned)
 
-        dst_twig = dst_twig_dir / f"_mmxx-{letter}.svg.twig"
-        dst_php  = dst_element_dir / f"mmxx-{letter}.php"  # <-- changed here
+        dst_twig = dst_twig_dir / f"_mmxx-{key}.svg.twig"
+        dst_php  = dst_element_dir / f"mmxx-{key}.php"
 
         _write_text_lf(dst_twig, cleaned)
         _write_text_lf(dst_php, cleaned)
@@ -372,6 +370,22 @@ def main() -> None:
             f"(bg {bg_removed}, comments {comments_removed}, polys {poly_count}, "
             f"empty-g {groups_removed}, dims {dims_removed}, ws {ws_removed})"
         )
+
+    # Characters
+    for src in char_files:
+        name = src.name
+        if not (name.startswith("character-") and name.endswith(".svg")):
+            continue
+
+        letter = name[len("character-") : -len(".svg")]
+        if not letter:
+            continue
+
+        process_one(src, letter)
+
+    # Logo (same treatment)
+    if logo_file.is_file():
+        process_one(logo_file, "logo")
 
     print(f"\nDone. Processed {processed} file(s).")
     print(f"Removed {total_bg_removed} background rect(s) total.")
