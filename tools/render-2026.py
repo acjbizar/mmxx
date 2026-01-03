@@ -528,8 +528,8 @@ def render_png(svg_text: str, out_png: Path, out_w: int, out_h: int) -> str:
 
 def main() -> None:
     root = Path(__file__).resolve().parent.parent  # tools/ -> project root
-    src_dir = root / "tests"
-    out_dir = root / "dist" / "instagram" / "2026"
+    src_dir = root / "src"
+    out_dir = root / "dist" / "images" / "instagram" / "2026"
     out_dir.mkdir(parents=True, exist_ok=True)
 
     letters = ["M", "X", "V", "I"]
@@ -538,7 +538,7 @@ def main() -> None:
     rng = random.Random()  # or random.Random(2026)
 
     for ch in letters:
-        src = src_dir / f"sketch-{ch}.svg"
+        src = src_dir / f"character-{ch}.svg"
         if not src.exists():
             print(f"Skipping {ch}: missing {src}")
             continue
