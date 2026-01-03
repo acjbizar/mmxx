@@ -313,7 +313,7 @@ def _write_text_lf(path: Path, text: str) -> None:
 def main() -> None:
     root = Path(__file__).resolve().parent.parent
 
-    src_dir = root / "tests"
+    src_dir = root / "src"
     dst_twig_dir = root / "templates"
     dst_element_dir = root / "templates" / "element"  # <-- changed here
 
@@ -323,9 +323,9 @@ def main() -> None:
     dst_twig_dir.mkdir(parents=True, exist_ok=True)
     dst_element_dir.mkdir(parents=True, exist_ok=True)
 
-    files = sorted(src_dir.glob("sketch-*.svg"))
+    files = sorted(src_dir.glob("character-*.svg"))
     if not files:
-        print(f"No files found matching {src_dir / 'sketch-*.svg'}")
+        print(f"No files found matching {src_dir / 'character-*.svg'}")
         return
 
     processed = 0
@@ -338,10 +338,10 @@ def main() -> None:
 
     for src in files:
         name = src.name
-        if not (name.startswith("sketch-") and name.endswith(".svg")):
+        if not (name.startswith("character-") and name.endswith(".svg")):
             continue
 
-        letter = name[len("sketch-") : -len(".svg")]
+        letter = name[len("character-") : -len(".svg")]
         if not letter:
             continue
 
@@ -353,7 +353,7 @@ def main() -> None:
         cleaned, groups_removed = remove_empty_groups(cleaned)
         cleaned, dims_removed, ws_removed = normalize_svg(cleaned)
 
-        dst_twig = dst_twig_dir / f"mmxx-{letter}.svg.twig"
+        dst_twig = dst_twig_dir / f"_mmxx-{letter}.svg.twig"
         dst_php  = dst_element_dir / f"mmxx-{letter}.php"  # <-- changed here
 
         _write_text_lf(dst_twig, cleaned)
