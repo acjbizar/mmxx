@@ -1,11 +1,7 @@
 
 # TODO
 
-- [ ] Turn shapes into font
-- [ ] Add letterproof
-- [ ] Add letterproof to `detype.nl`
 - [ ] Consider adding numbers
-- [ ] Consider adding Twig templates
 
 # Done
 
@@ -36,4 +32,8 @@
 - [x] Sketch letter Y
 - [x] Sketch letter Z
 - [x] Minify shapes
-- [x] Consider adding CakePHP templates
+- [x] Add CakePHP templates
+- [x] Add Twig templates
+- [x] Turn shapes into font
+- [x] Add letter sample
+- [x] Add letter sample to `detype.nl`
