@@ -443,12 +443,14 @@ def render_png(svg_text: str, out_png: Path, out_w: int, out_h: int) -> str:
 # --------------------------------- MAIN --------------------------------------
 
 def main() -> None:
-    ap = argparse.ArgumentParser(description="Render src/character-*.svg to dist/mmxx-*.png and dist/images/instagram/mmxx-*.png (1080x1080)")
+    ap = argparse.ArgumentParser(
+        description="Render src/character-*.svg (and src/logo.svg) to dist/images/mmxx-*.png and dist/images/instagram/mmxx-*.png (1080x1080)"
+    )
     ap.add_argument("--scale", type=float, default=1.0, help="Scale factor applied to viewBox size for dist/ (default: 1.0)")
     ap.add_argument("--size", type=int, default=0, help="Force square size for dist/ (e.g. 512). Overrides --scale if set.")
     ap.add_argument("--no-clean", action="store_true", help="Render raw SVGs without cleanup/simplification.")
-    ap.add_argument("--instagram", action="store_true", default=True, help="Also render 1080x1080 to dist/instagram (default: on).")
-    ap.add_argument("--no-instagram", dest="instagram", action="store_false", help="Disable dist/instagram output.")
+    ap.add_argument("--instagram", action="store_true", default=True, help="Also render 1080x1080 to dist/images/instagram (default: on).")
+    ap.add_argument("--no-instagram", dest="instagram", action="store_false", help="Disable dist/images/instagram output.")
     ap.add_argument("--ig-size", type=int, default=1080, help="Instagram output size (default: 1080).")
     args = ap.parse_args()
 
@@ -457,9 +459,23 @@ def main() -> None:
     dist_dir = root / "dist/images"
     ig_dir = dist_dir / "instagram"
 
-    files = sorted(src_dir.glob("character-*.svg"))
-    if not files:
-        print(f"No files found matching: {src_dir / 'character-*.svg'}")
+    char_files = sorted(src_dir.glob("character-*.svg"))
+
+    # --- NEW: logo ------------------------------------------------------------
+    logo_file = src_dir / "logo.svg"
+    inputs: List[Tuple[Path, str]] = []
+    for f in char_files:
+        name = f.name
+        letter = name[len("character-") : -len(".svg")] if name.startswith("character-") and name.endswith(".svg") else None
+        if letter:
+            inputs.append((f, letter))
+
+    if logo_file.is_file():
+        inputs.append((logo_file, "logo"))
+    # -------------------------------------------------------------------------
+
+    if not inputs:
+        print(f"No inputs found matching: {src_dir / 'character-*.svg'} (and no {logo_file})")
         return
 
     dist_dir.mkdir(parents=True, exist_ok=True)
@@ -469,12 +485,7 @@ def main() -> None:
     rendered_main = 0
     rendered_ig = 0
 
-    for f in files:
-        name = f.name  # character-A.svg
-        letter = name[len("character-") : -len(".svg")] if name.startswith("character-") and name.endswith(".svg") else None
-        if not letter:
-            continue
-
+    for f, key in inputs:
         svg_text = f.read_text(encoding="utf-8")
         if not args.no_clean:
             svg_text = cleanup_svg(svg_text)
@@ -488,7 +499,7 @@ def main() -> None:
             out_w = max(1, int(round(base_w * args.scale)))
             out_h = max(1, int(round(base_h * args.scale)))
 
-        out_png = dist_dir / f"mmxx-{letter}.png"
+        out_png = dist_dir / f"mmxx-{key}.png"
         method = render_png(svg_text, out_png, out_w, out_h)
         rendered_main += 1
 
@@ -496,7 +507,7 @@ def main() -> None:
 
         # Instagram output (forced square)
         if args.instagram:
-            ig_png = ig_dir / f"mmxx-{letter}.png"
+            ig_png = ig_dir / f"mmxx-{key}.png"
             ig_method = render_png(svg_text, ig_png, int(args.ig_size), int(args.ig_size))
             rendered_ig += 1
             msg += f" | IG -> {ig_png} ({args.ig_size}x{args.ig_size}, {ig_method})"
