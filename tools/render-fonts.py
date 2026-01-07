@@ -4,7 +4,7 @@ from __future__ import annotations
 import re
 import sys
 from pathlib import Path
-from typing import Dict, List, Tuple, Optional, Iterable
+from typing import Dict, List, Tuple, Optional
 
 import xml.etree.ElementTree as ET
 
@@ -12,8 +12,9 @@ from fontTools.fontBuilder import FontBuilder
 from fontTools.pens.ttGlyphPen import TTGlyphPen
 from fontTools.ttLib import TTFont
 
-from shapely.geometry import Polygon, MultiPolygon
-from shapely.ops import unary_union
+# Variable-font compiler
+from fontTools.designspaceLib import DesignSpaceDocument, AxisDescriptor, SourceDescriptor
+from fontTools.varLib import build as varlib_build
 
 # -----------------------------
 # Fixed config
@@ -21,8 +22,8 @@ from shapely.ops import unary_union
 FONT_FAMILY = "mmxx"
 FONT_STYLE = "Regular"
 
-DEFAULT_SRC_DIR = Path("src")     # ✅ source folder
-DEFAULT_DIST_DIR = Path("dist")   # ✅ output folder root
+DEFAULT_SRC_DIR = Path("src")
+DEFAULT_DIST_DIR = Path("dist")
 
 UPM = 1000
 ADVANCE_WIDTH = UPM
@@ -32,7 +33,23 @@ DESCENT = 0
 NUM_RE = re.compile(r"[-+]?(?:\d+\.?\d*|\.\d+)(?:[eE][-+]?\d+)?")
 
 # -----------------------------
-# File resolution: src/character-{letter}.svg
+# VF axis: “Gap” (bigger value => bigger whitespace)
+# -----------------------------
+AXIS_TAG = "GAPS"     # 4 chars
+AXIS_NAME = "Gap"
+AXIS_MIN = 0
+AXIS_DEFAULT = 0
+AXIS_MAX = 1000
+
+# At GAP=AXIS_MAX, polygons are scaled down to this factor around their centroid.
+# Smaller factor => more whitespace/gaps. Keep this conservative to avoid degeneracy.
+GAP_SCALE_AT_MAX = 0.82  # 0.82 is a good starting point; tweak later if desired.
+
+# -----------------------------
+# File resolution
+# Supports BOTH patterns:
+#  - src/character-{letter}.svg
+#  - tests/sketch-{letter}.svg
 # -----------------------------
 def resolve_glyph_svg(src_dir: Path, ch: str) -> Optional[Path]:
     lo = ch.lower()
@@ -41,6 +58,8 @@ def resolve_glyph_svg(src_dir: Path, ch: str) -> Optional[Path]:
     candidates = [
         src_dir / f"character-{lo}.svg",
         src_dir / f"character-{up}.svg",
+        src_dir / f"sketch-{lo}.svg",
+        src_dir / f"sketch-{up}.svg",
     ]
     for p in candidates:
         if p.exists():
@@ -48,7 +67,7 @@ def resolve_glyph_svg(src_dir: Path, ch: str) -> Optional[Path]:
     return None
 
 # -----------------------------
-# SVG parsing
+# SVG parsing (polygons only)
 # -----------------------------
 def _local_name(tag) -> str:
     if not isinstance(tag, str):
@@ -61,12 +80,12 @@ def parse_points(points_str: str) -> List[Tuple[float, float]]:
         raise ValueError(f"Bad polygon points: {points_str!r}")
     return list(zip(nums[0::2], nums[1::2]))
 
-def load_svg_polygons_raw(svg_path: Path) -> Tuple[Tuple[float, float, float, float], List[List[Tuple[float, float]]]]:
+def load_svg_polygons_raw(svg_path: Path) -> Tuple[Tuple[float, float, float, float], List[Tuple[str, List[Tuple[float, float]]]]]:
     """
     Returns:
       viewBox (minx, miny, w, h)
-      raw polys: list of polygons, each polygon = list of (x,y)
-    Reads only <polygon>. Any background rects are ignored automatically.
+      polygons: list of (stable_key, pts)
+    stable_key is used to keep contour order identical across masters.
     """
     root = ET.parse(svg_path).getroot()
 
@@ -74,125 +93,53 @@ def load_svg_polygons_raw(svg_path: Path) -> Tuple[Tuple[float, float, float, fl
     vb_nums = [float(x) for x in NUM_RE.findall(viewbox)]
     vb = (vb_nums[0], vb_nums[1], vb_nums[2], vb_nums[3]) if len(vb_nums) == 4 else (0.0, 0.0, 240.0, 240.0)
 
-    polys: List[List[Tuple[float, float]]] = []
+    polys: List[Tuple[str, List[Tuple[float, float]]]] = []
+    auto_i = 0
+
     for el in root.iter():
         if _local_name(el.tag) != "polygon":
             continue
-        pts = el.get("points")
-        if pts:
-            polys.append(parse_points(pts))
+        pts_str = el.get("points")
+        if not pts_str:
+            continue
 
+        pts = parse_points(pts_str)
+        # Stable contour ordering: prefer id if present
+        key = el.get("id") or f"__poly{auto_i:06d}"
+        auto_i += 1
+        polys.append((key, pts))
+
+    # sort by key to ensure deterministic order
+    polys.sort(key=lambda t: t[0])
     return vb, polys
 
 # -----------------------------
-# Union polygons like Illustrator "Unite"
+# Polygon scaling (gap control)
 # -----------------------------
-def union_polygons(polys: List[List[Tuple[float, float]]]):
-    shp_polys: List[Polygon] = []
-    for pts in polys:
-        if len(pts) < 3:
-            continue
-        try:
-            p = Polygon(pts)
-            if not p.is_valid:
-                p = p.buffer(0)
-            if not p.is_empty:
-                shp_polys.append(p)
-        except Exception:
-            continue
+def gap_to_scale(gap_value: float) -> float:
+    """
+    gap_value in [AXIS_MIN..AXIS_MAX].
+    Returns a scale factor in [GAP_SCALE_AT_MAX..1.0].
+    """
+    t = 0.0
+    if AXIS_MAX > AXIS_MIN:
+        t = (gap_value - AXIS_MIN) / (AXIS_MAX - AXIS_MIN)
+    t = max(0.0, min(1.0, t))
+    return 1.0 + t * (GAP_SCALE_AT_MAX - 1.0)
 
-    if not shp_polys:
-        return None
-
-    geom = unary_union(shp_polys)
-    if geom.is_empty:
-        return None
-    return geom
-
-def iter_polygons(geom) -> Iterable[Polygon]:
-    if geom is None:
-        return []
-    if isinstance(geom, Polygon):
-        return [geom]
-    if isinstance(geom, MultiPolygon):
-        return list(geom.geoms)
-    # Other geometry collections: best-effort
-    out: List[Polygon] = []
-    try:
-        for g in geom.geoms:
-            if isinstance(g, Polygon):
-                out.append(g)
-            elif isinstance(g, MultiPolygon):
-                out.extend(list(g.geoms))
-    except Exception:
-        pass
+def scale_points_about_centroid(pts: List[Tuple[float, float]], scale: float) -> List[Tuple[float, float]]:
+    if not pts:
+        return pts
+    cx = sum(x for x, _ in pts) / len(pts)
+    cy = sum(y for _, y in pts) / len(pts)
+    out = []
+    for x, y in pts:
+        out.append((cx + (x - cx) * scale, cy + (y - cy) * scale))
     return out
 
 # -----------------------------
-# Clean/minify SVG output (single <path>, evenodd)
-# -----------------------------
-def minify_between_tags(xml_bytes: bytes) -> bytes:
-    xml = xml_bytes.strip()
-    xml = re.sub(rb">\s+<", rb"><", xml)
-    return xml + b"\n"
-
-def _fmt_num(x: float) -> str:
-    # keep things compact
-    rx = round(x)
-    if abs(x - rx) < 1e-6:
-        return str(int(rx))
-    s = f"{x:.3f}".rstrip("0").rstrip(".")
-    return s if s else "0"
-
-def _ring_to_path(coords) -> str:
-    coords = list(coords)
-    if len(coords) < 4:
-        return ""
-    if coords[0] == coords[-1]:
-        coords = coords[:-1]
-    if not coords:
-        return ""
-    parts = [f"M {_fmt_num(coords[0][0])} {_fmt_num(coords[0][1])}"]
-    for (x, y) in coords[1:]:
-        parts.append(f"L {_fmt_num(x)} {_fmt_num(y)}")
-    parts.append("Z")
-    return " ".join(parts)
-
-def geom_to_path_d(geom) -> str:
-    if geom is None:
-        return ""
-    parts: List[str] = []
-    for poly in iter_polygons(geom):
-        ext = _ring_to_path(poly.exterior.coords)
-        if ext:
-            parts.append(ext)
-        for interior in poly.interiors:
-            hole = _ring_to_path(interior.coords)
-            if hole:
-                parts.append(hole)
-    return " ".join(parts)
-
-def write_clean_svg(svg_path: Path, out_path: Path) -> None:
-    vb, raw_polys = load_svg_polygons_raw(svg_path)
-    geom = union_polygons(raw_polys)
-
-    # ✅ viewBox only (no width/height), single path like template cleaner
-    svg = ET.Element(
-        "svg",
-        {"xmlns": "http://www.w3.org/2000/svg", "viewBox": f"{vb[0]:g} {vb[1]:g} {vb[2]:g} {vb[3]:g}"}
-    )
-
-    d = geom_to_path_d(geom)
-    if d:
-        ET.SubElement(svg, "path", {"d": d, "fill": "#000", "fill-rule": "evenodd"})
-
-    xml_bytes = ET.tostring(svg, encoding="utf-8", method="xml")
-    out_path.parent.mkdir(parents=True, exist_ok=True)
-    out_path.write_bytes(minify_between_tags(xml_bytes))
-
-# -----------------------------
 # Geometry -> TrueType glyph
-#   (non-zero winding: outer CW, holes CCW)
+# (we keep EACH polygon as its own contour so masters remain compatible)
 # -----------------------------
 def signed_area(points: List[Tuple[int, int]]) -> int:
     s = 0
@@ -207,7 +154,6 @@ def ensure_winding(points: List[Tuple[int, int]], clockwise: bool) -> List[Tuple
     if len(points) < 3:
         return points
     area = signed_area(points)
-    # In Y-up coords: area > 0 means CCW, area < 0 means CW
     is_ccw = area > 0
     if clockwise and is_ccw:
         return list(reversed(points))
@@ -215,9 +161,10 @@ def ensure_winding(points: List[Tuple[int, int]], clockwise: bool) -> List[Tuple
         return list(reversed(points))
     return points
 
-def geom_to_ttglyph(
+def polygons_to_ttglyph(
     vb: Tuple[float, float, float, float],
-    geom,
+    keyed_polys: List[Tuple[str, List[Tuple[float, float]]]],
+    gap_value: float,
     upm: int = UPM,
 ) -> object:
     minx, miny, w, h = vb
@@ -227,53 +174,44 @@ def geom_to_ttglyph(
     sx = upm / w
     sy = upm / h
 
+    scale = gap_to_scale(gap_value)
+
     pen = TTGlyphPen(None)
 
-    if geom is None:
-        return pen.glyph()
+    for _key, pts in keyed_polys:
+        if len(pts) < 3:
+            continue
 
-    for poly in iter_polygons(geom):
-        # exterior (outer) ring
-        ext_pts: List[Tuple[int, int]] = []
-        for x, y in list(poly.exterior.coords)[:-1]:
+        pts2 = scale_points_about_centroid(pts, scale)
+
+        ipts: List[Tuple[int, int]] = []
+        for x, y in pts2:
             xx = (x - minx) * sx
             yy = (h - (y - miny)) * sy  # flip Y (SVG down) -> font up
-            ext_pts.append((int(round(xx)), int(round(yy))))
-        ext_pts = ensure_winding(ext_pts, clockwise=True)
+            ipts.append((int(round(xx)), int(round(yy))))
 
-        if ext_pts:
-            pen.moveTo(ext_pts[0])
-            for p in ext_pts[1:]:
-                pen.lineTo(p)
-            pen.closePath()
+        # Each polygon is a filled contour (clockwise outer)
+        ipts = ensure_winding(ipts, clockwise=True)
+        if not ipts:
+            continue
 
-        # holes (interiors)
-        for interior in poly.interiors:
-            hole_pts: List[Tuple[int, int]] = []
-            for x, y in list(interior.coords)[:-1]:
-                xx = (x - minx) * sx
-                yy = (h - (y - miny)) * sy
-                hole_pts.append((int(round(xx)), int(round(yy))))
-            hole_pts = ensure_winding(hole_pts, clockwise=False)
-
-            if hole_pts:
-                pen.moveTo(hole_pts[0])
-                for p in hole_pts[1:]:
-                    pen.lineTo(p)
-                pen.closePath()
+        pen.moveTo(ipts[0])
+        for p in ipts[1:]:
+            pen.lineTo(p)
+        pen.closePath()
 
     return pen.glyph()
 
 # -----------------------------
-# Font build
+# Static master build
 # -----------------------------
-def build_mmxx_font(src_dir: Path, dist_dir: Path) -> None:
-    clean_svg_dir = dist_dir / "clean-svg"
-    fonts_dir = dist_dir / "fonts"
-    clean_svg_dir.mkdir(parents=True, exist_ok=True)
-    fonts_dir.mkdir(parents=True, exist_ok=True)
-
-    glyph_order = [".notdef", "space"] + [chr(c) for c in range(ord("A"), ord("Z") + 1)]
+def build_static_master(
+    src_dir: Path,
+    out_ttf: Path,
+    gap_value: float,
+    glyph_chars: List[str],
+) -> None:
+    glyph_order = [".notdef", "space"] + glyph_chars
     glyphs: Dict[str, object] = {}
     hmtx: Dict[str, Tuple[int, int]] = {}
 
@@ -293,11 +231,12 @@ def build_mmxx_font(src_dir: Path, dist_dir: Path) -> None:
     glyphs["space"] = pen.glyph()
     hmtx["space"] = (ADVANCE_WIDTH, 0)
 
+    cmap: Dict[int, str] # codepoint -> glyph name
     cmap = {32: "space"}
 
     missing: List[str] = []
 
-    for ch in [chr(c) for c in range(ord("A"), ord("Z") + 1)]:
+    for ch in glyph_chars:
         svg_path = resolve_glyph_svg(src_dir, ch)
 
         if svg_path is None:
@@ -305,12 +244,8 @@ def build_mmxx_font(src_dir: Path, dist_dir: Path) -> None:
             glyphs[ch] = pen.glyph()
             missing.append(ch)
         else:
-            # ✅ Clean & minify FIRST (like templates), and also build glyph from UNIONED geometry
-            write_clean_svg(svg_path, clean_svg_dir / f"{ch}.svg")
-
-            vb, raw_polys = load_svg_polygons_raw(svg_path)
-            geom = union_polygons(raw_polys)
-            glyphs[ch] = geom_to_ttglyph(vb, geom, upm=UPM)
+            vb, keyed_polys = load_svg_polygons_raw(svg_path)
+            glyphs[ch] = polygons_to_ttglyph(vb, keyed_polys, gap_value=gap_value, upm=UPM)
 
         hmtx[ch] = (ADVANCE_WIDTH, 0)
         cmap[ord(ch)] = ch
@@ -328,11 +263,13 @@ def build_mmxx_font(src_dir: Path, dist_dir: Path) -> None:
         usWinAscent=max(0, ASCENT),
         usWinDescent=max(0, -DESCENT),
     )
+
+    # Give each master a distinct unique ID, but same family/style
     fb.setupNameTable(
         {
             "familyName": FONT_FAMILY,
             "styleName": FONT_STYLE,
-            "uniqueFontIdentifier": f"{FONT_FAMILY}-{FONT_STYLE}",
+            "uniqueFontIdentifier": f"{FONT_FAMILY}-{FONT_STYLE}-GAP{int(gap_value)}",
             "fullName": f"{FONT_FAMILY} {FONT_STYLE}",
             "psName": f"{FONT_FAMILY}-{FONT_STYLE}",
             "version": "Version 1.000",
@@ -342,37 +279,112 @@ def build_mmxx_font(src_dir: Path, dist_dir: Path) -> None:
     fb.setupMaxp()
     fb.setupHead()
 
-    ttf_path = fonts_dir / f"{FONT_FAMILY}.ttf"
-    fb.save(str(ttf_path))
+    out_ttf.parent.mkdir(parents=True, exist_ok=True)
+    fb.save(str(out_ttf))
+
+    if missing:
+        print(f"[warn] Missing glyph SVGs for: {', '.join(missing)}", file=sys.stderr)
+
+# -----------------------------
+# Variable font build (varLib)
+# -----------------------------
+def build_variable_font_from_masters(master_min: Path, master_max: Path, out_var_ttf: Path) -> None:
+    """
+    Create a small designspace on disk and let varLib compile the VF.
+    """
+    ds = DesignSpaceDocument()
+
+    axis = AxisDescriptor()
+    axis.tag = AXIS_TAG
+    axis.name = AXIS_NAME
+    axis.minimum = AXIS_MIN
+    axis.default = AXIS_DEFAULT
+    axis.maximum = AXIS_MAX
+    ds.addAxis(axis)
+
+    s0 = SourceDescriptor()
+    s0.path = str(master_min)
+    s0.name = "master.gap0"
+    s0.location = {AXIS_NAME: AXIS_MIN}
+    s0.familyName = FONT_FAMILY
+    s0.styleName = "MasterGap0"
+    ds.addSource(s0)
+
+    s1 = SourceDescriptor()
+    s1.path = str(master_max)
+    s1.name = "master.gap1000"
+    s1.location = {AXIS_NAME: AXIS_MAX}
+    s1.familyName = FONT_FAMILY
+    s1.styleName = "MasterGap1000"
+    ds.addSource(s1)
+
+    out_var_ttf.parent.mkdir(parents=True, exist_ok=True)
+    designspace_path = out_var_ttf.with_suffix(".designspace")
+    ds.write(str(designspace_path))
+
+    # Build VF
+    varfont = varlib_build(str(designspace_path))
+    # fontTools has had different return shapes across versions; normalize:
+    if isinstance(varfont, tuple):
+        varfont = varfont[0]
+    varfont.save(str(out_var_ttf))
+
+# -----------------------------
+# Build mmxx VF (and optional web formats)
+# -----------------------------
+def build_mmxx_variable_font(src_dir: Path, dist_dir: Path) -> None:
+    fonts_dir = dist_dir / "fonts"
+    masters_dir = fonts_dir / "masters"
+    masters_dir.mkdir(parents=True, exist_ok=True)
+    fonts_dir.mkdir(parents=True, exist_ok=True)
+
+    # You can expand this later; keeping it aligned with your current generator intent.
+    glyph_chars = [chr(c) for c in range(ord("A"), ord("Z") + 1)] + [chr(c) for c in range(ord("a"), ord("z") + 1)]
+
+    master0 = masters_dir / f"{FONT_FAMILY}-GAP{AXIS_MIN}.ttf"
+    master1 = masters_dir / f"{FONT_FAMILY}-GAP{AXIS_MAX}.ttf"
+
+    print(f"Building masters:")
+    print(f"  {master0.name} (gap={AXIS_MIN}, scale={gap_to_scale(AXIS_MIN):.4f})")
+    build_static_master(src_dir=src_dir, out_ttf=master0, gap_value=AXIS_MIN, glyph_chars=glyph_chars)
+
+    print(f"  {master1.name} (gap={AXIS_MAX}, scale={gap_to_scale(AXIS_MAX):.4f})")
+    build_static_master(src_dir=src_dir, out_ttf=master1, gap_value=AXIS_MAX, glyph_chars=glyph_chars)
+
+    out_var_ttf = fonts_dir / f"{FONT_FAMILY}.ttf"
+    print(f"\nCompiling variable font -> {out_var_ttf}")
+    build_variable_font_from_masters(master0, master1, out_var_ttf)
 
     # WOFF
-    font = TTFont(str(ttf_path))
+    font = TTFont(str(out_var_ttf))
     font.flavor = "woff"
     font.save(str(fonts_dir / f"{FONT_FAMILY}.woff"))
 
     # WOFF2 (optional; commonly needs brotli)
     try:
-        font = TTFont(str(ttf_path))
+        font = TTFont(str(out_var_ttf))
         font.flavor = "woff2"
         font.save(str(fonts_dir / f"{FONT_FAMILY}.woff2"))
     except Exception as e:
         print(f"[warn] Could not write WOFF2 (often needs 'brotli'): {e}", file=sys.stderr)
 
-    print(f"Source SVGs:  {src_dir.resolve()} (pattern: character-{{letter}}.svg)")
-    print(f"Clean SVGs:   {clean_svg_dir.resolve()} (single-path, evenodd)")
+    print(f"\nDone.")
+    print(f"Source SVGs:  {src_dir.resolve()} (character-{{ch}}.svg OR sketch-{{ch}}.svg)")
     print(f"Fonts:        {fonts_dir.resolve()}")
-    if missing:
-        print(f"[warn] Missing glyph SVGs for: {', '.join(missing)}", file=sys.stderr)
+    print(f"Masters:      {masters_dir.resolve()}")
+    print(f"Axis:         {AXIS_NAME} ({AXIS_TAG}) {AXIS_MIN}..{AXIS_MAX} default {AXIS_DEFAULT}")
+    print(f"GAP_SCALE_AT_MAX = {GAP_SCALE_AT_MAX}")
 
 def main() -> None:
     src_dir = DEFAULT_SRC_DIR
     dist_dir = DEFAULT_DIST_DIR
+
     if len(sys.argv) >= 2:
         src_dir = Path(sys.argv[1])
     if len(sys.argv) >= 3:
         dist_dir = Path(sys.argv[2])
 
-    build_mmxx_font(src_dir=src_dir, dist_dir=dist_dir)
+    build_mmxx_variable_font(src_dir=src_dir, dist_dir=dist_dir)
 
 if __name__ == "__main__":
     main()
