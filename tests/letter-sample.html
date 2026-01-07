@@ -6,7 +6,7 @@
     <title>mmxx variable font – letter sample</title>
     <style>
         :root{
-            --gaps: 0;
+            --gap: 1.0;           /* axis value */
             --fontSize: 128px;
             --lineHeight: 1.05;
         }
@@ -14,9 +14,9 @@
         @font-face {
             font-family: "mmxx";
             src:
-                    url("../dist/fonts/mmxx.woff2") format("woff2"),
-                    url("../dist/fonts/mmxx.woff")  format("woff"),
-                    url("../dist/fonts/mmxx.ttf")   format("truetype");
+                    url("../dist/fonts/mmxx-vf.woff2") format("woff2"),
+                    url("../dist/fonts/mmxx-vf.woff")  format("woff"),
+                    url("../dist/fonts/mmxx-vf.ttf")   format("truetype");
             font-style: normal;
             font-weight: 400;
             font-display: swap;
@@ -65,7 +65,7 @@
 
         .control{
             display: grid;
-            grid-template-columns: 120px 1fr 72px;
+            grid-template-columns: 120px 1fr 90px;
             gap: 10px;
             align-items: center;
         }
@@ -128,14 +128,15 @@
             font-size: var(--fontSize);
             line-height: var(--lineHeight);
             letter-spacing: 0;
-            font-variation-settings: "GAPS" var(--gaps);
+            /* NOTE: axis tag is "GAP " with a trailing space */
+            font-variation-settings: "GAP " var(--gap);
             white-space: pre-wrap;
             word-break: break-word;
         }
 
         .bigLetter{
             font-family: "mmxx", monospace;
-            font-variation-settings: "GAPS" var(--gaps);
+            font-variation-settings: "GAP " var(--gap);
             font-size: 220px;
             line-height: 1;
             padding: 12px 0;
@@ -178,16 +179,17 @@
 
     <div class="card meta" id="meta">
         <span class="pill"><span class="dot" id="fontDot"></span><span id="fontStatus">Loading font…</span></span>
-        <span class="pill">Axis <code>"GAPS"</code>: <code id="gapsReadout">0</code></span>
-        <span class="pill">File: <code>../dist/fonts/mmxx.woff2</code></span>
+        <span class="pill">Axis <code>"GAP "</code> (Gap): <code id="gapReadout">1.00</code></span>
+        <span class="pill">Range: <code>0.50</code> → <code>2.00</code> (default <code>1.00</code>)</span>
+        <span class="pill">File: <code>../dist/fonts/mmxx-vf.woff2</code></span>
     </div>
 
     <div class="row">
         <div class="card controls">
             <div class="control">
-                <label for="gaps">Gap size</label>
-                <input id="gaps" type="range" min="0" max="1000" step="1" value="0" />
-                <input id="gapsNum" type="text" inputmode="numeric" value="0" />
+                <label for="gap">Gap</label>
+                <input id="gap" type="range" min="0.5" max="2.0" step="0.01" value="1.0" />
+                <input id="gapNum" type="text" inputmode="decimal" value="1.00" />
             </div>
 
             <div class="control">
@@ -198,14 +200,16 @@
 
             <div style="display:grid;gap:8px;">
                 <label for="text">Sample text</label>
-                <input id="text" type="text" value="ABCDEFGHIJKLMNOPQRSTUVWXYZ&#10;abcdefghijklmnopqrstuvwxyz&#10;The quick brown fox jumps over the lazy dog." />
-                <div class="hint">Tip: your font currently includes A–Z and a–z if you used the VF script as-is.</div>
+                <input id="text" type="text" value="ABCDEFGHIJKLMNOPQRSTUVWXYZ&#10;abcdefghijklmnopqrstuvwxyz&#10;The quick brown fox jumps over the lazy dog.&#10;0123456789" />
+                <div class="hint">Tip: the generator auto-discovers <code>src/character-*.svg</code> (digits included if present).</div>
             </div>
 
             <div style="display:flex;gap:10px;flex-wrap:wrap;">
                 <button class="btn" id="presetAlphabet">Alphabet</button>
                 <button class="btn" id="presetPangram">Pangram</button>
                 <button class="btn" id="presetSingle">Single letter</button>
+                <button class="btn" id="presetMin">Gap 50%</button>
+                <button class="btn" id="presetMax">Gap 200%</button>
                 <button class="btn" id="copyCss">Copy CSS snippet</button>
             </div>
 
@@ -222,12 +226,15 @@
 </div>
 
 <script>
+    const AXIS_TAG = "GAP ";   // IMPORTANT: trailing space
+    const MIN = 0.5, DEF = 1.0, MAX = 2.0;
+
     // --- DOM
     const root = document.documentElement;
 
-    const gaps = document.getElementById("gaps");
-    const gapsNum = document.getElementById("gapsNum");
-    const gapsReadout = document.getElementById("gapsReadout");
+    const gap = document.getElementById("gap");
+    const gapNum = document.getElementById("gapNum");
+    const gapReadout = document.getElementById("gapReadout");
 
     const size = document.getElementById("size");
     const sizeNum = document.getElementById("sizeNum");
@@ -248,61 +255,82 @@
         return Math.min(hi, Math.max(lo, n));
     }
 
-    function setCSSVars({gapsVal, sizeVal}){
-        root.style.setProperty("--gaps", String(gapsVal));
+    function fmt2(n){
+        return (Math.round(n * 100) / 100).toFixed(2);
+    }
+
+    function setCSSVars({gapVal, sizeVal}){
+        root.style.setProperty("--gap", String(gapVal));
         root.style.setProperty("--fontSize", `${sizeVal}px`);
-        gapsReadout.textContent = String(gapsVal);
+        gapReadout.textContent = fmt2(gapVal);
+
         cssSnippet.textContent =
             `font-family: "mmxx";
-font-variation-settings: "GAPS" ${gapsVal};
+font-variation-settings: "${AXIS_TAG}" ${fmt2(gapVal)};
 font-size: ${sizeVal}px;`;
     }
 
     function syncFromUI(){
-        const g = clamp(gaps.value, 0, 1000);
+        const g = clamp(gap.value, MIN, MAX);
         const s = clamp(size.value, 16, 260);
 
-        gapsNum.value = String(g);
+        gapNum.value = fmt2(g);
         sizeNum.value = String(s);
 
-        setCSSVars({gapsVal: g, sizeVal: s});
+        setCSSVars({gapVal: g, sizeVal: s});
 
         const t = (text.value ?? "").replace(/\r\n/g, "\n");
         sample.textContent = t;
 
-        // Big letter: first A–Z/a–z character in sample, else "A"
-        const m = t.match(/[A-Za-z]/);
+        const m = t.match(/[A-Za-z0-9]/);
         bigLetter.textContent = m ? m[0] : "A";
     }
 
-    function syncFromTextBox(el, min, max, rangeEl){
-        const v = clamp(el.value, min, max);
-        el.value = String(v);
-        rangeEl.value = String(v);
+    function syncGapFromText(){
+        const v = clamp(gapNum.value, MIN, MAX);
+        gapNum.value = fmt2(v);
+        gap.value = String(v);
+        syncFromUI();
+    }
+
+    function syncSizeFromText(){
+        const v = clamp(sizeNum.value, 16, 260);
+        sizeNum.value = String(v);
+        size.value = String(v);
         syncFromUI();
     }
 
     // --- events
-    gaps.addEventListener("input", syncFromUI);
+    gap.addEventListener("input", syncFromUI);
     size.addEventListener("input", syncFromUI);
 
-    gapsNum.addEventListener("change", () => syncFromTextBox(gapsNum, 0, 1000, gaps));
-    sizeNum.addEventListener("change", () => syncFromTextBox(sizeNum, 16, 260, size));
+    gapNum.addEventListener("change", syncGapFromText);
+    sizeNum.addEventListener("change", syncSizeFromText);
 
     text.addEventListener("input", syncFromUI);
 
     document.getElementById("presetAlphabet").addEventListener("click", () => {
-        text.value = "ABCDEFGHIJKLMNOPQRSTUVWXYZ\nabcdefghijklmnopqrstuvwxyz";
+        text.value = "ABCDEFGHIJKLMNOPQRSTUVWXYZ\nabcdefghijklmnopqrstuvwxyz\n0123456789";
         syncFromUI();
     });
 
     document.getElementById("presetPangram").addEventListener("click", () => {
-        text.value = "The quick brown fox jumps over the lazy dog.\nABCDEFGHIJKLMNOPQRSTUVWXYZ\nabcdefghijklmnopqrstuvwxyz";
+        text.value = "The quick brown fox jumps over the lazy dog.\nABCDEFGHIJKLMNOPQRSTUVWXYZ\nabcdefghijklmnopqrstuvwxyz\n0123456789";
         syncFromUI();
     });
 
     document.getElementById("presetSingle").addEventListener("click", () => {
         text.value = "A";
+        syncFromUI();
+    });
+
+    document.getElementById("presetMin").addEventListener("click", () => {
+        gap.value = String(MIN);
+        syncFromUI();
+    });
+
+    document.getElementById("presetMax").addEventListener("click", () => {
+        gap.value = String(MAX);
         syncFromUI();
     });
 
@@ -320,11 +348,8 @@ font-size: ${sizeVal}px;`;
     // --- font load indicator
     (async () => {
         try {
-            // Wait until font system is ready, then confirm "mmxx" can render.
             await document.fonts.ready;
-            // Request a test load. If it resolves, we assume it loaded.
-            await document.fonts.load('24px "mmxx"', "A");
-
+            await document.fonts.load(`24px "mmxx"`, "A");
             fontDot.classList.add("ok");
             fontStatus.textContent = "Font loaded";
         } catch (e) {
