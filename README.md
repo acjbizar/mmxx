@@ -20,7 +20,7 @@ Constructivist typeface.
     --font-mmxx: "MMXX", system-ui, sans-serif;
 }
 
-.font--primitives {
+.font--mmxx {
     font-family: var(--font-mmxx);
     font-variant-ligatures: none;
 }
