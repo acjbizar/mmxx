@@ -2,6 +2,7 @@
 # TODO
 
 - [ ] Consider adding numbers
+- [ ] Consider inverse versions of the glyphs as alts
 
 # Done
 

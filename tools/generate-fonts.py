@@ -32,6 +32,16 @@ DESCENT = 0
 NUM_RE = re.compile(r"[-+]?(?:\d+\.?\d*|\.\d+)(?:[eE][-+]?\d+)?")
 
 # -----------------------------
+# Helpers
+# -----------------------------
+def _write_text_lf(path: Path, text: str) -> None:
+    """Write UTF-8 text with LF newlines (works on older Python too)."""
+    text = text.replace("\r\n", "\n").replace("\r", "\n")
+    path.parent.mkdir(parents=True, exist_ok=True)
+    with path.open("w", encoding="utf-8", newline="\n") as f:
+        f.write(text)
+
+# -----------------------------
 # Glyph naming (safe)
 # -----------------------------
 def glyph_name_for_char(ch: str) -> str:
@@ -335,9 +345,20 @@ def build_mmxx_font(src_dir: Path, dist_dir: Path) -> None:
     except Exception as e:
         print(f"[warn] Could not write WOFF2 (often needs 'brotli'): {e}", file=sys.stderr)
 
+    # -----------------------------
+    # Copy src/style/main.css -> dist/fonts/mmxx.css
+    # -----------------------------
+    css_src = src_dir / "style" / "main.css"
+    css_dst = fonts_dir / f"{FONT_FAMILY}.css"
+    if css_src.exists():
+        _write_text_lf(css_dst, css_src.read_text(encoding="utf-8"))
+    else:
+        print(f"[warn] CSS source not found: {css_src}", file=sys.stderr)
+
     print(f"Source SVGs: {src_dir.resolve()}  (pattern: character-{{letter}}.svg)")
     print(f"Fonts:       {fonts_dir.resolve()}")
     print(f"TTF:         {ttf_path.resolve()}")
+    print(f"CSS:         {css_dst.resolve()}")
     if missing:
         print(f"[warn] Missing SVGs for: {', '.join(missing)}", file=sys.stderr)
 
