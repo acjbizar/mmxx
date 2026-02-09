@@ -1,0 +1,5 @@
+{
+  "name": "TypeGrid Designer",
+  "description": "An interactive grid-based typeface design tool using a custom 8x8 triangular subdivision grid. Features include polygon toggling, undo/redo history, and SVG export.",
+  "requestFramePermissions": []
+}
