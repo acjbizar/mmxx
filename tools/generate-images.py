@@ -5,6 +5,7 @@ import re
 import shutil
 import subprocess
 import tempfile
+import zlib
 from typing import Optional, Tuple, Dict, List
 
 from lxml import etree  # py -m pip install lxml
@@ -16,6 +17,12 @@ try:
     import cairosvg  # py -m pip install cairosvg
 except Exception:
     cairosvg = None
+
+# Optional Pillow fallback (only used if a renderer ignores background options)
+try:
+    from PIL import Image  # py -m pip install pillow
+except Exception:
+    Image = None
 
 
 # -------------------- SVG CLEANUP (same as template script) -------------------
@@ -350,19 +357,107 @@ def _get_svg_size(svg_text: str) -> Tuple[int, int]:
     return 240, 240
 
 
-def _render_with_cairosvg(svg_text: str, out_png: Path, out_w: int, out_h: int) -> bool:
+PNG_SIG = b"\x89PNG\r\n\x1a\n"
+
+
+def png_has_alpha(png_path: Path) -> bool:
+    """
+    Detect alpha by reading IHDR color type:
+      4 = grayscale+alpha
+      6 = RGBA
+    """
+    data = png_path.read_bytes()
+    if not data.startswith(PNG_SIG):
+        return False
+    pos = 8
+    if pos + 8 > len(data):
+        return False
+    ihdr_len = int.from_bytes(data[pos:pos + 4], "big")
+    ihdr_type = data[pos + 4:pos + 8]
+    if ihdr_type != b"IHDR":
+        return False
+    ihdr_data = data[pos + 8:pos + 8 + ihdr_len]
+    if len(ihdr_data) < 10:
+        return False
+    color_type = ihdr_data[9]
+    return color_type in (4, 6)
+
+
+def flatten_png_to_white(png_path: Path) -> bool:
+    """
+    If the PNG has alpha, composite onto white and re-save.
+    Requires Pillow. Returns True if modified.
+    """
+    if Image is None:
+        return False
+    if not png_has_alpha(png_path):
+        return False
+
+    im = Image.open(png_path).convert("RGBA")
+    bg = Image.new("RGBA", im.size, (255, 255, 255, 255))
+    out = Image.alpha_composite(bg, im).convert("RGB")
+    out.save(png_path)
+    return True
+
+
+def ensure_min_png_size(png_path: Path, min_bytes: int = 2048, keyword: str = "igpad") -> bool:
+    """
+    If png_path is smaller than min_bytes, inject a tEXt chunk after IHDR to pad the file.
+    This does NOT change dimensions or pixel data.
+    Returns True if the file was modified, False otherwise.
+    """
+    data = png_path.read_bytes()
+    if len(data) >= min_bytes:
+        return False
+
+    if not data.startswith(PNG_SIG):
+        raise ValueError(f"Not a PNG file: {png_path}")
+
+    pos = 8
+    if pos + 8 > len(data):
+        raise ValueError(f"Truncated PNG: {png_path}")
+
+    ihdr_len = int.from_bytes(data[pos:pos + 4], "big")
+    ihdr_type = data[pos + 4:pos + 8]
+    if ihdr_type != b"IHDR":
+        raise ValueError(f"Unexpected first chunk (not IHDR) in: {png_path}")
+
+    ihdr_total = 12 + ihdr_len  # len(4) + type(4) + data + crc(4)
+    ihdr_end = pos + ihdr_total
+    if ihdr_end > len(data):
+        raise ValueError(f"Truncated IHDR chunk in: {png_path}")
+
+    # Overshoot a bit to be safe
+    extra_needed = (min_bytes - len(data)) + 64
+
+    key = keyword.encode("latin1", "ignore")[:79]  # keyword 1..79 bytes
+    chunk_data = key + b"\x00" + (b"A" * max(0, extra_needed))
+    ctype = b"tEXt"
+    clen = len(chunk_data).to_bytes(4, "big")
+    crc = (zlib.crc32(ctype + chunk_data) & 0xFFFFFFFF).to_bytes(4, "big")
+    chunk = clen + ctype + chunk_data + crc
+
+    out = data[:ihdr_end] + chunk + data[ihdr_end:]
+    png_path.write_bytes(out)
+    return True
+
+
+def _render_with_cairosvg(svg_text: str, out_png: Path, out_w: int, out_h: int, background: Optional[str]) -> bool:
     if cairosvg is None:
         return False
-    cairosvg.svg2png(
+    kwargs = dict(
         bytestring=svg_text.encode("utf-8"),
         write_to=str(out_png),
         output_width=out_w,
         output_height=out_h,
     )
+    if background:
+        kwargs["background_color"] = background
+    cairosvg.svg2png(**kwargs)
     return True
 
 
-def _render_with_inkscape(svg_text: str, out_png: Path, out_w: int, out_h: int) -> bool:
+def _render_with_inkscape(svg_text: str, out_png: Path, out_w: int, out_h: int, background: Optional[str]) -> bool:
     inkscape = shutil.which("inkscape")
     if not inkscape:
         return False
@@ -372,6 +467,10 @@ def _render_with_inkscape(svg_text: str, out_png: Path, out_w: int, out_h: int) 
         with open(fd, "w", encoding="utf-8", newline="\n") as f:
             f.write(svg_text)
 
+        bg_args: List[str] = []
+        if background:
+            bg_args = [f"--export-background={background}", "--export-background-opacity=1"]
+
         cmd = [
             inkscape,
             tmp_svg,
@@ -380,6 +479,7 @@ def _render_with_inkscape(svg_text: str, out_png: Path, out_w: int, out_h: int) 
             "--export-area-page",
             f"--export-width={out_w}",
             f"--export-height={out_h}",
+            *bg_args,
         ]
         try:
             subprocess.run(cmd, check=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
@@ -392,6 +492,7 @@ def _render_with_inkscape(svg_text: str, out_png: Path, out_w: int, out_h: int) 
                 "--export-area-page",
                 f"--export-width={out_w}",
                 f"--export-height={out_h}",
+                *bg_args,
             ]
             subprocess.run(cmd_old, check=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
             return True
@@ -402,7 +503,7 @@ def _render_with_inkscape(svg_text: str, out_png: Path, out_w: int, out_h: int) 
             pass
 
 
-def _render_with_rsvg(svg_text: str, out_png: Path, out_w: int, out_h: int) -> bool:
+def _render_with_rsvg(svg_text: str, out_png: Path, out_w: int, out_h: int, background: Optional[str]) -> bool:
     rsvg = shutil.which("rsvg-convert")
     if not rsvg:
         return False
@@ -412,7 +513,11 @@ def _render_with_rsvg(svg_text: str, out_png: Path, out_w: int, out_h: int) -> b
         with open(fd, "w", encoding="utf-8", newline="\n") as f:
             f.write(svg_text)
 
-        cmd = [rsvg, "-o", str(out_png), "-w", str(out_w), "-h", str(out_h), tmp_svg]
+        cmd = [rsvg]
+        if background:
+            cmd += ["-b", background]
+        cmd += ["-o", str(out_png), "-w", str(out_w), "-h", str(out_h), tmp_svg]
+
         subprocess.run(cmd, check=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
         return True
     finally:
@@ -422,22 +527,28 @@ def _render_with_rsvg(svg_text: str, out_png: Path, out_w: int, out_h: int) -> b
             pass
 
 
-def render_png(svg_text: str, out_png: Path, out_w: int, out_h: int) -> str:
+def render_png(svg_text: str, out_png: Path, out_w: int, out_h: int, background: Optional[str] = None) -> str:
     out_png.parent.mkdir(parents=True, exist_ok=True)
 
-    if _render_with_cairosvg(svg_text, out_png, out_w, out_h):
-        return "cairosvg"
-    if _render_with_inkscape(svg_text, out_png, out_w, out_h):
-        return "inkscape"
-    if _render_with_rsvg(svg_text, out_png, out_w, out_h):
-        return "rsvg-convert"
+    if _render_with_cairosvg(svg_text, out_png, out_w, out_h, background):
+        method = "cairosvg"
+    elif _render_with_inkscape(svg_text, out_png, out_w, out_h, background):
+        method = "inkscape"
+    elif _render_with_rsvg(svg_text, out_png, out_w, out_h, background):
+        method = "rsvg-convert"
+    else:
+        raise RuntimeError(
+            "No renderer available. Install one of:\n"
+            "  - CairoSVG:  py -m pip install cairosvg\n"
+            "  - Inkscape (and ensure `inkscape` is on PATH)\n"
+            "  - rsvg-convert (librsvg) (and ensure it is on PATH)\n"
+        )
 
-    raise RuntimeError(
-        "No renderer available. Install one of:\n"
-        "  - CairoSVG:  py -m pip install cairosvg\n"
-        "  - Inkscape (and ensure `inkscape` is on PATH)\n"
-        "  - rsvg-convert (librsvg) (and ensure it is on PATH)\n"
-    )
+    # If a renderer ignored background flags, flatten alpha to white as a last resort (requires Pillow)
+    if background and background.lower() == "white":
+        flatten_png_to_white(out_png)
+
+    return method
 
 
 # --------------------------------- MAIN --------------------------------------
@@ -445,8 +556,9 @@ def render_png(svg_text: str, out_png: Path, out_w: int, out_h: int) -> str:
 def main() -> None:
     ap = argparse.ArgumentParser(
         description=(
-            "Render src/character-*.svg plus src/logo.svg and src/sheet.svg "
-            "to dist/images/mmxx-*.png and dist/images/instagram/mmxx-*.png (1080x1080)"
+            "Render src/character-*.svg plus src/logo.svg and src/sheet.svg to:\n"
+            "  - dist/images/mmxx-*.png\n"
+            "  - dist/images/instagram/mmxx-*.png (square, white background, minimum byte size)\n"
         )
     )
     ap.add_argument("--scale", type=float, default=1.0, help="Scale factor applied to viewBox size for dist/ (default: 1.0)")
@@ -455,6 +567,7 @@ def main() -> None:
     ap.add_argument("--instagram", action="store_true", default=True, help="Also render 1080x1080 to dist/images/instagram (default: on).")
     ap.add_argument("--no-instagram", dest="instagram", action="store_false", help="Disable dist/images/instagram output.")
     ap.add_argument("--ig-size", type=int, default=1080, help="Instagram output size (default: 1080).")
+    ap.add_argument("--ig-min-bytes", type=int, default=2048, help="Minimum file size for IG PNGs (default: 2048).")
     args = ap.parse_args()
 
     root = Path(__file__).resolve().parent.parent  # tools/ -> project root
@@ -463,22 +576,22 @@ def main() -> None:
     ig_dir = dist_dir / "instagram"
 
     char_files = sorted(src_dir.glob("character-*.svg"))
-
     logo_file = src_dir / "logo.svg"
-    sheet_file = src_dir / "sheet.svg"  # NEW: include sheet.svg
+    sheet_file = src_dir / "sheet.svg"
 
     inputs: List[Tuple[Path, str]] = []
+
     for f in char_files:
         name = f.name
-        letter = name[len("character-") : -len(".svg")] if name.startswith("character-") and name.endswith(".svg") else None
-        if letter:
-            inputs.append((f, letter))
+        key = name[len("character-") : -len(".svg")] if name.startswith("character-") and name.endswith(".svg") else None
+        if key:
+            inputs.append((f, key))
 
     if logo_file.is_file():
         inputs.append((logo_file, "logo"))
 
     if sheet_file.is_file():
-        inputs.append((sheet_file, "sheet"))  # NEW
+        inputs.append((sheet_file, "sheet"))
 
     if not inputs:
         print(f"No inputs found matching: {src_dir / 'character-*.svg'} (and no {logo_file} / {sheet_file})")
@@ -506,21 +619,52 @@ def main() -> None:
             out_h = max(1, int(round(base_h * args.scale)))
 
         out_png = dist_dir / f"mmxx-{key}.png"
-        method = render_png(svg_text, out_png, out_w, out_h)
+        method = render_png(svg_text, out_png, out_w, out_h, background=None)
         rendered_main += 1
 
         msg = f"{f} -> {out_png} ({out_w}x{out_h}, {method})"
 
-        # Instagram output (forced square)
+        # Instagram output: forced square, WHITE background, ensure size threshold
         if args.instagram:
             ig_png = ig_dir / f"mmxx-{key}.png"
-            ig_method = render_png(svg_text, ig_png, int(args.ig_size), int(args.ig_size))
+            ig_method = render_png(
+                svg_text,
+                ig_png,
+                int(args.ig_size),
+                int(args.ig_size),
+                background="white",
+            )
             rendered_ig += 1
-            msg += f" | IG -> {ig_png} ({args.ig_size}x{args.ig_size}, {ig_method})"
+
+            size_before = ig_png.stat().st_size
+            padded = False
+
+            if args.ig_min_bytes and args.ig_min_bytes > 0:
+                padded = ensure_min_png_size(ig_png, min_bytes=int(args.ig_min_bytes))
+                size_after = ig_png.stat().st_size
+
+                # HARD guarantee
+                if size_after < int(args.ig_min_bytes):
+                    raise RuntimeError(
+                        f"IG PNG still too small: {ig_png} is {size_after} bytes "
+                        f"(min {args.ig_min_bytes})."
+                    )
+            else:
+                size_after = size_before
+
+            msg += (
+                f" | IG -> {ig_png} ({args.ig_size}x{args.ig_size}, {ig_method}, bg=white"
+                f", bytes={size_before}->{size_after}"
+            )
+            if args.ig_min_bytes and args.ig_min_bytes > 0:
+                msg += f", min_bytes={args.ig_min_bytes}"
+            if padded:
+                msg += ", padded"
+            msg += ")"
 
         print(msg)
 
-    print(f"\nDone.")
+    print("\nDone.")
     print(f"Rendered {rendered_main} PNG(s) to {dist_dir}.")
     if args.instagram:
         print(f"Rendered {rendered_ig} PNG(s) to {ig_dir}.")
