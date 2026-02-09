@@ -11,29 +11,25 @@ import {
   Check, 
   Download,
   Terminal,
-  Type
+  Type,
+  RefreshCw
 } from 'lucide-react';
 
 const App: React.FC = () => {
-  // Explicitly type the Set as Set<string> to prevent unknown inference
-  const [activeIds, setActiveIds] = useState<Set<string>>(new Set<string>());
-  const [history, setHistory] = useState<Set<string>[]>([]);
-  const [historyIndex, setHistoryIndex] = useState(-1);
+  // Helper to get all IDs
+  const allIdsSet = useMemo(() => new Set<string>(GRID_POLYGONS.map(p => p.id)), []);
+
+  // Initialize state with all polygons active
+  const [activeIds, setActiveIds] = useState<Set<string>>(allIdsSet);
+  const [history, setHistory] = useState<Set<string>[]>([new Set<string>(allIdsSet)]);
+  const [historyIndex, setHistoryIndex] = useState(0);
+  
   const [showGridLines, setShowGridLines] = useState(true);
   const [copied, setCopied] = useState(false);
-  const [isExportVisible, setIsExportVisible] = useState(false);
-
-  // Initialize history with an empty Set<string>
-  useEffect(() => {
-    if (history.length === 0) {
-      setHistory([new Set<string>()]);
-      setHistoryIndex(0);
-    }
-  }, []);
+  const [isExportVisible, setIsExportVisible] = useState(true);
 
   const addToHistory = (newActiveIds: Set<string>) => {
     const newHistory = history.slice(0, historyIndex + 1);
-    // Explicitly type the new history entry
     newHistory.push(new Set<string>(newActiveIds));
     setHistory(newHistory);
     setHistoryIndex(newHistory.length - 1);
@@ -41,7 +37,6 @@ const App: React.FC = () => {
 
   const togglePolygon = useCallback((id: string) => {
     setActiveIds(prev => {
-      // Fix inference issue by explicitly typing the new Set
       const next = new Set<string>(prev);
       if (next.has(id)) {
         next.delete(id);
@@ -57,7 +52,6 @@ const App: React.FC = () => {
     if (historyIndex > 0) {
       const prevIndex = historyIndex - 1;
       setHistoryIndex(prevIndex);
-      // Ensure the set is correctly typed when restoring from history
       setActiveIds(new Set<string>(history[prevIndex]));
     }
   }, [history, historyIndex]);
@@ -66,7 +60,6 @@ const App: React.FC = () => {
     if (historyIndex < history.length - 1) {
       const nextIndex = historyIndex + 1;
       setHistoryIndex(nextIndex);
-      // Ensure the set is correctly typed when restoring from history
       setActiveIds(new Set<string>(history[nextIndex]));
     }
   }, [history, historyIndex]);
@@ -75,6 +68,24 @@ const App: React.FC = () => {
     const next = new Set<string>();
     setActiveIds(next);
     addToHistory(next);
+  }, [history, historyIndex]);
+
+  const fillAll = useCallback(() => {
+    setActiveIds(allIdsSet);
+    addToHistory(allIdsSet);
+  }, [allIdsSet, history, historyIndex]);
+
+  const invertAll = useCallback(() => {
+    setActiveIds(prev => {
+      const next = new Set<string>();
+      GRID_POLYGONS.forEach(poly => {
+        if (!prev.has(poly.id)) {
+          next.add(poly.id);
+        }
+      });
+      addToHistory(next);
+      return next;
+    });
   }, [history, historyIndex]);
 
   const generatedSvgString = useMemo(() => {
@@ -126,14 +137,14 @@ ${polygonsMarkup}
           </h1>
         </div>
 
-        <div className="flex items-center gap-3">
+        <div className="flex items-center gap-2">
           <button
             onClick={undo}
             disabled={historyIndex <= 0}
             className="p-2 hover:bg-slate-100 disabled:opacity-30 disabled:hover:bg-transparent rounded-md transition-colors"
             title="Undo"
           >
-            <Undo2 size={20} />
+            <Undo2 size={18} />
           </button>
           <button
             onClick={redo}
@@ -141,31 +152,46 @@ ${polygonsMarkup}
             className="p-2 hover:bg-slate-100 disabled:opacity-30 disabled:hover:bg-transparent rounded-md transition-colors"
             title="Redo"
           >
-            <Redo2 size={20} />
+            <Redo2 size={18} />
           </button>
-          <div className="w-px h-6 bg-slate-200 mx-1" />
+          <div className="w-px h-5 bg-slate-200 mx-1" />
           <button
             onClick={() => setShowGridLines(!showGridLines)}
             className={`p-2 rounded-md transition-colors ${showGridLines ? 'bg-indigo-50 text-indigo-600' : 'hover:bg-slate-100'}`}
             title="Toggle Grid Lines"
           >
-            {showGridLines ? <Eye size={20} /> : <EyeOff size={20} />}
+            {showGridLines ? <Eye size={18} /> : <EyeOff size={18} />}
+          </button>
+          <div className="w-px h-5 bg-slate-200 mx-1" />
+          <button
+            onClick={fillAll}
+            className="p-2 hover:bg-indigo-50 text-slate-500 hover:text-indigo-600 rounded-md transition-colors"
+            title="Select All"
+          >
+            <Check size={18} />
+          </button>
+          <button
+            onClick={invertAll}
+            className="p-2 hover:bg-indigo-50 text-slate-500 hover:text-indigo-600 rounded-md transition-colors"
+            title="Invert Selection"
+          >
+            <RefreshCw size={18} />
           </button>
           <button
             onClick={reset}
-            className="p-2 hover:bg-red-50 text-slate-400 hover:text-red-500 rounded-md transition-colors"
-            title="Reset All"
+            className="p-2 hover:bg-red-50 text-slate-500 hover:text-red-500 rounded-md transition-colors"
+            title="Clear All"
           >
-            <Trash2 size={20} />
+            <Trash2 size={18} />
           </button>
         </div>
       </header>
 
       {/* Main Content Area */}
       <main className="flex-1 flex overflow-hidden">
-        {/* Workspace */}
-        <div className="flex-1 relative flex items-center justify-center bg-slate-200/30 overflow-auto p-12">
-          <div className="bg-white p-12 shadow-2xl rounded-xl border border-slate-100 transform transition-transform duration-300">
+        {/* Workspace - Aligned to top-center */}
+        <div className="flex-1 relative flex items-start justify-center bg-slate-100/50 overflow-auto pt-16 pb-24 transition-all">
+          <div className="bg-white p-12 shadow-xl rounded-xl border border-slate-200">
             <svg
               width={SVG_SIZE * 2}
               height={SVG_SIZE * 2}
@@ -173,10 +199,8 @@ ${polygonsMarkup}
               className="cursor-pointer select-none"
               style={{ touchAction: 'none' }}
             >
-              {/* Workspace Background */}
               <rect x="0" y="0" width={SVG_SIZE} height={SVG_SIZE} fill="#fff" />
 
-              {/* All Polygons */}
               <g shape-rendering="crispEdges">
                 {GRID_POLYGONS.map((poly) => (
                   <polygon
@@ -184,99 +208,86 @@ ${polygonsMarkup}
                     id={poly.id}
                     points={poly.points}
                     onClick={() => togglePolygon(poly.id)}
-                    className={`transition-colors duration-150 cursor-pointer ${
+                    className={`transition-colors duration-100 cursor-pointer ${
                       activeIds.has(poly.id) 
                         ? 'fill-slate-900 stroke-slate-900' 
                         : 'fill-transparent stroke-transparent hover:fill-indigo-100/50'
                     }`}
-                    strokeWidth="0.5"
+                    strokeWidth="0.1"
                   />
                 ))}
               </g>
 
-              {/* Grid Lines */}
               {showGridLines && (
-                <g fill="none" stroke="#1e90ff" strokeWidth="0.5" shape-rendering="crispEdges" opacity="0.6" pointerEvents="none">
-                  {/* Vertical Lines */}
+                <g fill="none" stroke="#1e90ff" strokeWidth="0.5" shape-rendering="crispEdges" opacity="0.4" pointerEvents="none">
                   {Array.from({ length: 9 }).map((_, i) => (
                     <line key={`v${i}`} x1={i * 30} y1="0" x2={i * 30} y2={SVG_SIZE} />
                   ))}
-                  {/* Horizontal Lines */}
                   {Array.from({ length: 9 }).map((_, i) => (
                     <line key={`h${i}`} x1="0" y1={i * 30} x2={SVG_SIZE} y2={i * 30} />
-                  ))}
-                  {/* Center Points / Diagonal Helper Visuals */}
-                  {Array.from({ length: 8 }).map((_, r) => (
-                    Array.from({ length: 8 }).map((_, c) => (
-                      <circle key={`p${r}${c}`} cx={c * 30 + 15} cy={r * 30 + 15} r="0.5" fill="#1e90ff" />
-                    ))
                   ))}
                 </g>
               )}
             </svg>
           </div>
           
-          {/* Legend/Context */}
-          <div className="absolute bottom-6 left-6 text-xs text-slate-500 bg-white/80 backdrop-blur shadow px-3 py-2 rounded-lg border border-slate-200">
-            <p>Active Polygons: <span className="font-bold text-slate-800">{activeIds.size}</span></p>
-            <p>Click segments to toggle. Use history to undo mistakes.</p>
+          <div className="absolute bottom-6 left-6 text-xs text-slate-400 font-medium tracking-wider">
+            GRID: 8x8 TRIANGULAR SUBDIVISIONS | ACTIVE: {activeIds.size} / 256
           </div>
         </div>
 
-        {/* Side Panel (Code/Export) */}
-        <aside className={`w-96 border-l bg-white flex flex-col transition-all duration-300 transform ${isExportVisible ? 'translate-x-0' : 'translate-x-full absolute right-0 inset-y-0 h-full'}`}>
-          <div className="p-4 border-b flex items-center justify-between shrink-0">
+        {/* Side Panel (Code/Export) - Persistent */}
+        <aside className={`flex flex-col border-l bg-white transition-all duration-300 ${isExportVisible ? 'w-[450px]' : 'w-0 overflow-hidden'}`}>
+          <div className="p-4 border-b flex items-center justify-between shrink-0 bg-slate-50/50">
             <div className="flex items-center gap-2">
               <Terminal size={18} className="text-indigo-600" />
-              <h2 className="font-semibold text-sm uppercase tracking-wider text-slate-500">SVG Output</h2>
+              <h2 className="font-bold text-xs uppercase tracking-widest text-slate-500">Live SVG Markup</h2>
             </div>
             <button 
               onClick={() => setIsExportVisible(false)}
-              className="p-1 hover:bg-slate-100 rounded text-slate-400"
+              className="p-1.5 hover:bg-slate-200 rounded text-slate-400 transition-colors"
+              title="Collapse Panel"
             >
-              Close
+              <Terminal size={16} />
             </button>
           </div>
           
-          <div className="flex-1 overflow-auto p-4 bg-slate-900 font-mono text-[10px] leading-relaxed text-indigo-300">
-            <pre className="whitespace-pre-wrap select-all">
+          <div className="flex-1 overflow-auto p-6 bg-slate-950 font-mono text-[11px] leading-relaxed text-indigo-200/90 selection:bg-indigo-500/30">
+            <pre className="whitespace-pre-wrap">
               {generatedSvgString}
             </pre>
           </div>
 
-          <div className="p-4 bg-white border-t space-y-3 shrink-0">
+          <div className="p-6 bg-white border-t border-slate-100 space-y-3 shrink-0 shadow-[0_-4px_6px_-1px_rgba(0,0,0,0.05)]">
             <button
               onClick={copyToClipboard}
-              className={`w-full py-2.5 px-4 flex items-center justify-center gap-2 rounded-lg font-medium transition-all ${
+              className={`w-full py-3 px-4 flex items-center justify-center gap-2 rounded-xl font-semibold transition-all shadow-sm ${
                 copied 
                 ? 'bg-emerald-50 text-emerald-600 border border-emerald-200' 
-                : 'bg-indigo-600 text-white hover:bg-indigo-700 active:scale-[0.98]'
+                : 'bg-indigo-600 text-white hover:bg-indigo-700 active:scale-[0.98] hover:shadow-indigo-200 hover:shadow-lg'
               }`}
             >
               {copied ? <Check size={18} /> : <Copy size={18} />}
-              {copied ? 'Copied!' : 'Copy SVG Markup'}
+              {copied ? 'Copied to Clipboard' : 'Copy SVG Markup'}
             </button>
             <button
               onClick={downloadSvg}
-              className="w-full py-2.5 px-4 flex items-center justify-center gap-2 rounded-lg font-medium text-slate-700 bg-slate-100 hover:bg-slate-200 transition-all border border-slate-200"
+              className="w-full py-3 px-4 flex items-center justify-center gap-2 rounded-xl font-semibold text-slate-600 bg-white hover:bg-slate-50 transition-all border border-slate-200 active:scale-[0.98]"
             >
               <Download size={18} />
-              Download .svg
+              Download SVG File
             </button>
           </div>
         </aside>
       </main>
 
-      {/* Persistent Call-to-Action / Floating Toggle for Panel */}
+      {/* Floating Toggle if Panel is Hidden */}
       {!isExportVisible && (
         <button
           onClick={() => setIsExportVisible(true)}
-          className="fixed bottom-6 right-6 p-4 bg-indigo-600 text-white rounded-full shadow-2xl hover:bg-indigo-700 transition-all active:scale-90 group z-20"
+          className="fixed bottom-8 right-8 p-5 bg-indigo-600 text-white rounded-full shadow-2xl hover:bg-indigo-700 transition-all active:scale-90 z-20"
         >
           <Terminal size={24} />
-          <span className="absolute right-full mr-3 top-1/2 -translate-y-1/2 px-3 py-1 bg-slate-900 text-white text-xs rounded opacity-0 group-hover:opacity-100 transition-opacity whitespace-nowrap pointer-events-none">
-            Export SVG
-          </span>
         </button>
       )}
     </div>
