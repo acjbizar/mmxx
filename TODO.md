@@ -2,6 +2,8 @@
 # TODO
 
 - [ ] Consider inverse versions of the glyphs as alts
+- [ ] Add 4 character squares/logos for LOVE, MM25, ADHD, DEID, LOGO, 2222, and more?
+- [ ] Experiment with animating the polygon colors.
 
 # Done
 
