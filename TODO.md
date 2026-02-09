@@ -1,7 +1,6 @@
 
 # TODO
 
-- [ ] Consider adding numbers
 - [ ] Consider inverse versions of the glyphs as alts
 
 # Done
@@ -38,3 +37,4 @@
 - [x] Turn shapes into font
 - [x] Add letter sample
 - [x] Add letter sample to `detype.nl`
+- [x] Consider adding numbers
