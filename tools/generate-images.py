@@ -444,7 +444,10 @@ def render_png(svg_text: str, out_png: Path, out_w: int, out_h: int) -> str:
 
 def main() -> None:
     ap = argparse.ArgumentParser(
-        description="Render src/character-*.svg (and src/logo.svg) to dist/images/mmxx-*.png and dist/images/instagram/mmxx-*.png (1080x1080)"
+        description=(
+            "Render src/character-*.svg plus src/logo.svg and src/sheet.svg "
+            "to dist/images/mmxx-*.png and dist/images/instagram/mmxx-*.png (1080x1080)"
+        )
     )
     ap.add_argument("--scale", type=float, default=1.0, help="Scale factor applied to viewBox size for dist/ (default: 1.0)")
     ap.add_argument("--size", type=int, default=0, help="Force square size for dist/ (e.g. 512). Overrides --scale if set.")
@@ -461,8 +464,9 @@ def main() -> None:
 
     char_files = sorted(src_dir.glob("character-*.svg"))
 
-    # --- NEW: logo ------------------------------------------------------------
     logo_file = src_dir / "logo.svg"
+    sheet_file = src_dir / "sheet.svg"  # NEW: include sheet.svg
+
     inputs: List[Tuple[Path, str]] = []
     for f in char_files:
         name = f.name
@@ -472,10 +476,12 @@ def main() -> None:
 
     if logo_file.is_file():
         inputs.append((logo_file, "logo"))
-    # -------------------------------------------------------------------------
+
+    if sheet_file.is_file():
+        inputs.append((sheet_file, "sheet"))  # NEW
 
     if not inputs:
-        print(f"No inputs found matching: {src_dir / 'character-*.svg'} (and no {logo_file})")
+        print(f"No inputs found matching: {src_dir / 'character-*.svg'} (and no {logo_file} / {sheet_file})")
         return
 
     dist_dir.mkdir(parents=True, exist_ok=True)
