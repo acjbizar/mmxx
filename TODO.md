@@ -2,7 +2,6 @@
 # TODO
 
 - [ ] Consider inverse versions of the glyphs as alts
-- [ ] Add 4 character squares/logos for LOVE, MM25, ADHD, DEID, LOGO, 2222, and more?
 - [ ] Experiment with animating the polygon colors.
 
 # Done
@@ -40,3 +39,4 @@
 - [x] Add letter sample
 - [x] Add letter sample to `detype.nl`
 - [x] Consider adding numbers
+- [x] Add 4 character squares/logos for LOVE, MM25, ADHD, DEID, LOGO, 2222, and more?
