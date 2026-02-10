@@ -12,8 +12,15 @@ from fontTools.fontBuilder import FontBuilder
 from fontTools.pens.ttGlyphPen import TTGlyphPen
 from fontTools.ttLib import TTFont
 
-from shapely.geometry import Polygon, MultiPolygon
+from shapely.geometry import Polygon, MultiPolygon, box as shp_box
 from shapely.ops import unary_union
+
+# Optional: easiest/robust GSUB builder
+try:
+    from fontTools.feaLib.builder import addOpenTypeFeaturesFromString
+except Exception:
+    addOpenTypeFeaturesFromString = None
+
 
 # -----------------------------
 # Fixed config
@@ -31,6 +38,7 @@ DESCENT = 0
 
 NUM_RE = re.compile(r"[-+]?(?:\d+\.?\d*|\.\d+)(?:[eE][-+]?\d+)?")
 
+
 # -----------------------------
 # Helpers
 # -----------------------------
@@ -41,6 +49,7 @@ def _write_text_lf(path: Path, text: str) -> None:
     with path.open("w", encoding="utf-8", newline="\n") as f:
         f.write(text)
 
+
 # -----------------------------
 # Glyph naming (safe)
 # -----------------------------
@@ -50,8 +59,9 @@ def glyph_name_for_char(ch: str) -> str:
         return f"uni{cp:04X}"
     return f"u{cp:06X}"
 
+
 # -----------------------------
-# File resolution: src/character-{letter}.svg
+# File resolution
 # -----------------------------
 def resolve_glyph_svg(src_dir: Path, ch: str) -> Optional[Path]:
     lo = ch.lower()
@@ -59,6 +69,18 @@ def resolve_glyph_svg(src_dir: Path, ch: str) -> Optional[Path]:
     candidates = [
         src_dir / f"character-{lo}.svg",
         src_dir / f"character-{up}.svg",
+    ]
+    for p in candidates:
+        if p.exists():
+            return p
+    return None
+
+def resolve_inverse_svg(src_dir: Path, ch: str) -> Optional[Path]:
+    lo = ch.lower()
+    up = ch.upper()
+    candidates = [
+        src_dir / f"inverse-{lo}.svg",
+        src_dir / f"inverse-{up}.svg",
     ]
     for p in candidates:
         if p.exists():
@@ -83,6 +105,7 @@ def discover_chars(src_dir: Path) -> List[str]:
         if c not in ordered:
             ordered.append(c)
     return ordered
+
 
 # -----------------------------
 # SVG parsing
@@ -121,6 +144,7 @@ def load_svg_polygons_raw(svg_path: Path) -> Tuple[Tuple[float, float, float, fl
 
     return vb, polys
 
+
 # -----------------------------
 # Union polygons like Illustrator "Unite"
 # -----------------------------
@@ -144,6 +168,10 @@ def union_polygons(polys: List[List[Tuple[float, float]]]):
     geom = unary_union(shp_polys)
     if geom.is_empty:
         return None
+    if not geom.is_valid:
+        geom = geom.buffer(0)
+    if geom.is_empty:
+        return None
     return geom
 
 def iter_polygons(geom) -> List[Polygon]:
@@ -164,8 +192,39 @@ def iter_polygons(geom) -> List[Polygon]:
         pass
     return out
 
+
 # -----------------------------
-# Geometry -> TrueType glyph
+# Exact inverse inside viewBox
+# -----------------------------
+def inverse_geom_from_base(vb: Tuple[float, float, float, float], base_geom):
+    minx, miny, w, h = vb
+    clip = shp_box(minx, miny, minx + w, miny + h)
+
+    if base_geom is None:
+        return clip
+
+    try:
+        g = base_geom.intersection(clip)
+        if g.is_empty:
+            return clip
+    except Exception:
+        g = base_geom
+
+    try:
+        inv = clip.difference(g)
+        if inv.is_empty:
+            return None
+        if not inv.is_valid:
+            inv = inv.buffer(0)
+        if inv.is_empty:
+            return None
+        return inv
+    except Exception:
+        return None
+
+
+# -----------------------------
+# Geometry -> TrueType glyph (+ correct LSB)
 # -----------------------------
 def _signed_area(points: List[Tuple[int, int]]) -> int:
     s = 0
@@ -179,7 +238,6 @@ def _signed_area(points: List[Tuple[int, int]]) -> int:
 def _ensure_winding(points: List[Tuple[int, int]], clockwise: bool) -> List[Tuple[int, int]]:
     if len(points) < 3:
         return points
-    # In Y-up coords: area > 0 => CCW, area < 0 => CW
     is_ccw = _signed_area(points) > 0
     if clockwise and is_ccw:
         return list(reversed(points))
@@ -196,7 +254,15 @@ def _dedupe_consecutive(points: List[Tuple[int, int]]) -> List[Tuple[int, int]]:
             out.append(p)
     return out
 
-def geom_to_ttglyph(vb: Tuple[float, float, float, float], geom, upm: int = UPM) -> object:
+def geom_to_ttglyph_and_lsb(
+    vb: Tuple[float, float, float, float],
+    geom,
+    upm: int = UPM
+) -> Tuple[object, int]:
+    """
+    Returns (glyph, lsb).
+    lsb MUST match the outline xMin for correct positioning.
+    """
     minx, miny, w, h = vb
     if w <= 0 or h <= 0:
         raise ValueError(f"Invalid viewBox: {vb}")
@@ -206,11 +272,13 @@ def geom_to_ttglyph(vb: Tuple[float, float, float, float], geom, upm: int = UPM)
 
     pen = TTGlyphPen(None)
     if geom is None:
-        return pen.glyph()
+        return pen.glyph(), 0
 
-    # Stable order (largest first helps consistency)
     polys = iter_polygons(geom)
     polys.sort(key=lambda p: abs(p.area), reverse=True)
+
+    any_point = False
+    x_min_outline = None  # type: Optional[int]
 
     for poly in polys:
         # exterior
@@ -218,7 +286,12 @@ def geom_to_ttglyph(vb: Tuple[float, float, float, float], geom, upm: int = UPM)
         for x, y in list(poly.exterior.coords)[:-1]:
             xx = (x - minx) * sx
             yy = (h - (y - miny)) * sy  # flip Y
-            ext_pts.append((int(round(xx)), int(round(yy))))
+            xi = int(round(xx))
+            yi = int(round(yy))
+            ext_pts.append((xi, yi))
+            any_point = True
+            x_min_outline = xi if x_min_outline is None else min(x_min_outline, xi)
+
         ext_pts = _dedupe_consecutive(ext_pts)
         ext_pts = _ensure_winding(ext_pts, clockwise=True)
         if len(ext_pts) >= 3:
@@ -233,7 +306,12 @@ def geom_to_ttglyph(vb: Tuple[float, float, float, float], geom, upm: int = UPM)
             for x, y in list(interior.coords)[:-1]:
                 xx = (x - minx) * sx
                 yy = (h - (y - miny)) * sy
-                hole_pts.append((int(round(xx)), int(round(yy))))
+                xi = int(round(xx))
+                yi = int(round(yy))
+                hole_pts.append((xi, yi))
+                any_point = True
+                x_min_outline = xi if x_min_outline is None else min(x_min_outline, xi)
+
             hole_pts = _dedupe_consecutive(hole_pts)
             hole_pts = _ensure_winding(hole_pts, clockwise=False)
             if len(hole_pts) >= 3:
@@ -242,7 +320,12 @@ def geom_to_ttglyph(vb: Tuple[float, float, float, float], geom, upm: int = UPM)
                     pen.lineTo(p)
                 pen.closePath()
 
-    return pen.glyph()
+    if not any_point or x_min_outline is None:
+        return pen.glyph(), 0
+
+    # Correct left side bearing:
+    return pen.glyph(), int(x_min_outline)
+
 
 # -----------------------------
 # Font build
@@ -255,14 +338,23 @@ def build_mmxx_font(src_dir: Path, dist_dir: Path) -> None:
     if not chars:
         raise SystemExit(f"No files found in {src_dir} matching character-*.svg")
 
-    # glyph order uses safe names
+    # base glyph names
     char_to_gname = {ch: glyph_name_for_char(ch) for ch in chars}
-    glyph_order = [".notdef", "space"] + [char_to_gname[ch] for ch in chars]
+
+    # If inverse-*.svg exists, we expose a .salt glyph + GSUB 'salt'
+    inverse_map: Dict[str, str] = {}
+    for ch in chars:
+        if resolve_inverse_svg(src_dir, ch) is not None:
+            base = char_to_gname[ch]
+            alt = f"{base}.salt"
+            inverse_map[base] = alt
+
+    glyph_order = [".notdef", "space"] + [char_to_gname[ch] for ch in chars] + list(inverse_map.values())
 
     glyphs: Dict[str, object] = {}
     hmtx: Dict[str, Tuple[int, int]] = {}
 
-    # .notdef: simple box
+    # .notdef
     pen = TTGlyphPen(None)
     m = int(UPM * 0.1)
     pen.moveTo((m, m))
@@ -271,21 +363,24 @@ def build_mmxx_font(src_dir: Path, dist_dir: Path) -> None:
     pen.lineTo((m, UPM - m))
     pen.closePath()
     glyphs[".notdef"] = pen.glyph()
-    hmtx[".notdef"] = (ADVANCE_WIDTH, 0)
+    hmtx[".notdef"] = (ADVANCE_WIDTH, m)  # xMin is m
 
     # space
     pen = TTGlyphPen(None)
     glyphs["space"] = pen.glyph()
     hmtx["space"] = (ADVANCE_WIDTH, 0)
 
-    # cmap
+    # cmap (base glyphs only)
     cmap: Dict[int, str] = {32: "space"}
     for ch in chars:
         cmap[ord(ch)] = char_to_gname[ch]
 
     missing: List[str] = []
 
-    # build glyphs
+    # cache base geom for exact inverse computation
+    base_geom_by_gname: Dict[str, Tuple[Tuple[float, float, float, float], object]] = {}
+
+    # build base glyphs
     for ch in chars:
         gname = char_to_gname[ch]
         svg_path = resolve_glyph_svg(src_dir, ch)
@@ -293,13 +388,26 @@ def build_mmxx_font(src_dir: Path, dist_dir: Path) -> None:
         if svg_path is None:
             pen = TTGlyphPen(None)
             glyphs[gname] = pen.glyph()
+            hmtx[gname] = (ADVANCE_WIDTH, 0)
             missing.append(ch)
-        else:
-            vb, raw_polys = load_svg_polygons_raw(svg_path)
-            geom = union_polygons(raw_polys)
-            glyphs[gname] = geom_to_ttglyph(vb, geom, upm=UPM)
+            base_geom_by_gname[gname] = ((0.0, 0.0, 240.0, 240.0), None)
+            continue
 
-        hmtx[gname] = (ADVANCE_WIDTH, 0)
+        vb, raw_polys = load_svg_polygons_raw(svg_path)
+        geom = union_polygons(raw_polys)
+        base_geom_by_gname[gname] = (vb, geom)
+
+        g, lsb = geom_to_ttglyph_and_lsb(vb, geom, upm=UPM)
+        glyphs[gname] = g
+        hmtx[gname] = (ADVANCE_WIDTH, lsb)
+
+    # build alt glyphs as exact inverse of base in the same vb
+    for base_gname, alt_gname in inverse_map.items():
+        vb, base_geom = base_geom_by_gname.get(base_gname, ((0.0, 0.0, 240.0, 240.0), None))
+        inv_geom = inverse_geom_from_base(vb, base_geom)
+        g, lsb = geom_to_ttglyph_and_lsb(vb, inv_geom, upm=UPM)
+        glyphs[alt_gname] = g
+        hmtx[alt_gname] = (ADVANCE_WIDTH, lsb)
 
     fb = FontBuilder(UPM, isTTF=True)
     fb.setupGlyphOrder(glyph_order)
@@ -324,10 +432,19 @@ def build_mmxx_font(src_dir: Path, dist_dir: Path) -> None:
             "version": "Version 1.000",
         }
     )
-    # keepGlyphNames=False avoids old latin-1 post table issues
     fb.setupPost(keepGlyphNames=False)
     fb.setupMaxp()
     fb.setupHead()
+
+    # GSUB 'salt' (base -> base.salt)
+    if inverse_map and addOpenTypeFeaturesFromString is not None:
+        fea_lines = ["feature salt {"]
+        for base, alt in inverse_map.items():
+            fea_lines.append(f"  sub {base} by {alt};")
+        fea_lines.append("} salt;")
+        addOpenTypeFeaturesFromString(fb.font, "\n".join(fea_lines))
+    elif inverse_map:
+        print("[warn] fontTools.feaLib not available; cannot emit GSUB 'salt'.", file=sys.stderr)
 
     ttf_path = fonts_dir / f"{FONT_FAMILY}.ttf"
     fb.save(str(ttf_path))
@@ -337,7 +454,7 @@ def build_mmxx_font(src_dir: Path, dist_dir: Path) -> None:
     font.flavor = "woff"
     font.save(str(fonts_dir / f"{FONT_FAMILY}.woff"))
 
-    # WOFF2 (optional; needs brotli)
+    # WOFF2
     try:
         font = TTFont(str(ttf_path))
         font.flavor = "woff2"
@@ -345,9 +462,7 @@ def build_mmxx_font(src_dir: Path, dist_dir: Path) -> None:
     except Exception as e:
         print(f"[warn] Could not write WOFF2 (often needs 'brotli'): {e}", file=sys.stderr)
 
-    # -----------------------------
-    # Copy src/style/main.css -> dist/fonts/mmxx.css
-    # -----------------------------
+    # Copy CSS
     css_src = src_dir / "style" / "main.css"
     css_dst = fonts_dir / f"{FONT_FAMILY}.css"
     if css_src.exists():
@@ -355,12 +470,16 @@ def build_mmxx_font(src_dir: Path, dist_dir: Path) -> None:
     else:
         print(f"[warn] CSS source not found: {css_src}", file=sys.stderr)
 
-    print(f"Source SVGs: {src_dir.resolve()}  (pattern: character-{{letter}}.svg)")
-    print(f"Fonts:       {fonts_dir.resolve()}")
-    print(f"TTF:         {ttf_path.resolve()}")
-    print(f"CSS:         {css_dst.resolve()}")
+    print(f"Source SVGs:  {src_dir.resolve()}  (character-{{char}}.svg)")
+    print(f"Inverse flags:{src_dir.resolve()}  (inverse-{{char}}.svg) -> GSUB 'salt'")
+    print(f"Fonts:        {fonts_dir.resolve()}")
+    print(f"TTF:          {ttf_path.resolve()}")
+    print(f"CSS:          {css_dst.resolve()}")
     if missing:
-        print(f"[warn] Missing SVGs for: {', '.join(missing)}", file=sys.stderr)
+        print(f"[warn] Missing base SVGs for: {', '.join(missing)}", file=sys.stderr)
+    if not inverse_map:
+        print("[info] No inverse-*.svg found; no 'salt' alternates emitted.")
+
 
 def main() -> None:
     src_dir = DEFAULT_SRC_DIR

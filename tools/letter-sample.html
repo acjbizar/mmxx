@@ -9,6 +9,7 @@
             --gap: 1.0;           /* axis value */
             --fontSize: 128px;
             --lineHeight: 1.05;
+            --salt: 0;            /* 0/1 toggle */
         }
 
         @font-face {
@@ -130,6 +131,11 @@
             letter-spacing: 0;
             /* NOTE: axis tag is "GAP " with a trailing space */
             font-variation-settings: "GAP " var(--gap);
+
+            /* SALT toggle */
+            font-variant-alternates: stylistic(salt);
+            font-feature-settings: "salt" var(--salt);
+
             white-space: pre-wrap;
             word-break: break-word;
         }
@@ -137,6 +143,11 @@
         .bigLetter{
             font-family: "mmxx", monospace;
             font-variation-settings: "GAP " var(--gap);
+
+            /* SALT toggle */
+            font-variant-alternates: stylistic(salt);
+            font-feature-settings: "salt" var(--salt);
+
             font-size: 220px;
             line-height: 1;
             padding: 12px 0;
@@ -171,6 +182,25 @@
             background: #fcfcfc;
             overflow: auto;
         }
+
+        .toggleRow{
+            display: flex;
+            align-items: center;
+            gap: 10px;
+            flex-wrap: wrap;
+        }
+
+        .toggle{
+            display: inline-flex;
+            gap: 8px;
+            align-items: center;
+            padding: 6px 10px;
+            border: 1px solid #e6e6e6;
+            border-radius: 999px;
+            background: #fff;
+            user-select: none;
+        }
+        .toggle input{ transform: translateY(1px); }
     </style>
 </head>
 <body>
@@ -182,6 +212,7 @@
         <span class="pill">Axis <code>"GAP "</code> (Gap): <code id="gapReadout">1.00</code></span>
         <span class="pill">Range: <code>0.50</code> → <code>2.00</code> (default <code>1.00</code>)</span>
         <span class="pill">File: <code>../dist/fonts/mmxx-vf.woff2</code></span>
+        <span class="pill">Variant: <code id="saltReadout">salt off</code></span>
     </div>
 
     <div class="row">
@@ -198,9 +229,17 @@
                 <input id="sizeNum" type="text" inputmode="numeric" value="128" />
             </div>
 
+            <div class="toggleRow">
+                <label class="toggle" for="saltToggle" title="Toggle stylistic alternates via 'salt'">
+                    <input id="saltToggle" type="checkbox" />
+                    <span>SALT variant</span>
+                </label>
+                <span class="hint" style="margin:0;">(uses <code>font-feature-settings: "salt"</code>)</span>
+            </div>
+
             <div style="display:grid;gap:8px;">
                 <label for="text">Sample text</label>
-                <input id="text" type="text" value="ABCDEFGHIJKLMNOPQRSTUVWXYZ&#10;abcdefghijklmnopqrstuvwxyz&#10;The quick brown fox jumps over the lazy dog.&#10;0123456789" />
+                <input id="text" type="text" value="abcdefghijklmnopqrstuvwxyz&#10;the quick brown fox jumps over the lazy dog.&#10;0123456789" />
                 <div class="hint">Tip: the generator auto-discovers <code>src/character-*.svg</code> (digits included if present).</div>
             </div>
 
@@ -219,7 +258,7 @@
         </div>
 
         <div class="card">
-            <div class="bigLetter" id="bigLetter" aria-label="big letter">A</div>
+            <div class="bigLetter" id="bigLetter" aria-label="big letter">a</div>
             <div class="sample" id="sample" aria-label="sample text"></div>
         </div>
     </div>
@@ -238,6 +277,9 @@
 
     const size = document.getElementById("size");
     const sizeNum = document.getElementById("sizeNum");
+
+    const saltToggle = document.getElementById("saltToggle");
+    const saltReadout = document.getElementById("saltReadout");
 
     const text = document.getElementById("text");
     const sample = document.getElementById("sample");
@@ -259,31 +301,41 @@
         return (Math.round(n * 100) / 100).toFixed(2);
     }
 
-    function setCSSVars({gapVal, sizeVal}){
+    function setCSSVars({gapVal, sizeVal, saltVal}){
         root.style.setProperty("--gap", String(gapVal));
         root.style.setProperty("--fontSize", `${sizeVal}px`);
+        root.style.setProperty("--salt", String(saltVal ? 1 : 0));
+
         gapReadout.textContent = fmt2(gapVal);
+        saltReadout.textContent = saltVal ? "salt on" : "salt off";
 
         cssSnippet.textContent =
             `font-family: "mmxx";
 font-variation-settings: "${AXIS_TAG}" ${fmt2(gapVal)};
+font-feature-settings: "salt" ${saltVal ? 1 : 0};
 font-size: ${sizeVal}px;`;
+    }
+
+    function pickBigGlyph(t){
+        // Only lowercase and digits are supported for the big preview.
+        const m = (t ?? "").match(/[a-z0-9]/);
+        return m ? m[0] : "a";
     }
 
     function syncFromUI(){
         const g = clamp(gap.value, MIN, MAX);
         const s = clamp(size.value, 16, 260);
+        const saltVal = !!saltToggle.checked;
 
         gapNum.value = fmt2(g);
         sizeNum.value = String(s);
 
-        setCSSVars({gapVal: g, sizeVal: s});
+        setCSSVars({gapVal: g, sizeVal: s, saltVal});
 
         const t = (text.value ?? "").replace(/\r\n/g, "\n");
         sample.textContent = t;
 
-        const m = t.match(/[A-Za-z0-9]/);
-        bigLetter.textContent = m ? m[0] : "A";
+        bigLetter.textContent = pickBigGlyph(t);
     }
 
     function syncGapFromText(){
@@ -308,19 +360,20 @@ font-size: ${sizeVal}px;`;
     sizeNum.addEventListener("change", syncSizeFromText);
 
     text.addEventListener("input", syncFromUI);
+    saltToggle.addEventListener("change", syncFromUI);
 
     document.getElementById("presetAlphabet").addEventListener("click", () => {
-        text.value = "ABCDEFGHIJKLMNOPQRSTUVWXYZ\nabcdefghijklmnopqrstuvwxyz\n0123456789";
+        text.value = "abcdefghijklmnopqrstuvwxyz\n0123456789";
         syncFromUI();
     });
 
     document.getElementById("presetPangram").addEventListener("click", () => {
-        text.value = "The quick brown fox jumps over the lazy dog.\nABCDEFGHIJKLMNOPQRSTUVWXYZ\nabcdefghijklmnopqrstuvwxyz\n0123456789";
+        text.value = "the quick brown fox jumps over the lazy dog.\nabcdefghijklmnopqrstuvwxyz\n0123456789";
         syncFromUI();
     });
 
     document.getElementById("presetSingle").addEventListener("click", () => {
-        text.value = "A";
+        text.value = "a";
         syncFromUI();
     });
 
@@ -349,7 +402,7 @@ font-size: ${sizeVal}px;`;
     (async () => {
         try {
             await document.fonts.ready;
-            await document.fonts.load(`24px "mmxx"`, "A");
+            await document.fonts.load(`24px "mmxx"`, "a");
             fontDot.classList.add("ok");
             fontStatus.textContent = "Font loaded";
         } catch (e) {
