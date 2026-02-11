@@ -11,20 +11,18 @@ Logo layout (for --chars):
 - Always 2 by 2: [0 1; 2 3]
 - --gap 0 (default): no extra spacing
 - --gap 1: spacing AND outer padding = 1/8th of a character cell size
-    - i.e. gap_x = max_glyph_width/8, gap_y = max_glyph_height/8
+    - gap_x = max_glyph_width/8, gap_y = max_glyph_height/8
+    - pad_x = gap_x, pad_y = gap_y
 
 Also in --chars mode:
-- Removes per-glyph full-canvas WHITE background rects (so you don’t get 4 white squares)
+- Removes per-glyph full-canvas WHITE background rects (prevents 4 white squares)
 
-Animation themes:
-- classic (default):
-    Every polygon pulses toward white and back to its base color.
-- diamond:
-    Diamond-like scintillation:
-      - strong grey contrast (darker + lighter greys)
-      - slow shimmer and slow glints
-      - bright specular flashes
-      - dispersion color only in highlights (tinted-white), with RANDOM saturation per facet
+Themes:
+- classic (default): original pulse-to-white using polygon base colors (or --color)
+- diamond: high-contrast greys + bright specular + dispersion "fire" in highlights
+- silver / gold / bronze: metallic body tint + strong specular + subtle highlight tints
+- ruby / jade / sapphire / emerald: gem body tint + deep contrast + colored highlights
+- rainbow: per-facet hue body + stronger colorful highlights
 
 Output:
   dist/videos/character-{char}.{ext}
@@ -52,6 +50,7 @@ import re
 import shutil
 import subprocess
 import tempfile
+from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path
 from typing import Dict, List, Optional, Tuple
@@ -215,12 +214,9 @@ def _is_whiteish_color_str(s: str) -> bool:
     if c in {"#fff", "#ffffff", "white"}:
         return True
     if c.startswith("rgb(") and "255" in c:
-        # rough but fine for background strips
         return True
-    # try parsing if possible
     try:
         r, g, b = _parse_css_color_to_rgb(s)
-        # white-ish threshold
         return (r + g + b) / (3.0 * 255.0) > 0.92
     except Exception:
         return False
@@ -285,18 +281,16 @@ def _strip_white_full_canvas_rects(svg_root: etree._Element, vb: Tuple[float, fl
     Remove any <rect> that:
       - exactly covers the glyph viewBox
       - AND is filled (directly or via style) with white-ish color
-    This prevents 4 "white squares" in the combined 2x2 logo.
     """
     minx, miny, vbw, vbh = vb
     tol = 1e-6
 
-    # remove anywhere in the glyph (common backgrounds are top-level, but be robust)
     rects = svg_root.xpath('.//*[local-name()="rect"]')
     for r in rects:
         if not isinstance(r.tag, str):
             continue
         if r.get("transform"):
-            continue  # background rects usually have no transform
+            continue
 
         try:
             x = float(r.get("x", "0") or "0")
@@ -328,7 +322,7 @@ def build_logo_svg_from_chars_2x2(char_svgs: List[Path], gap_flag: int) -> etree
 
     gap_flag:
       0 -> no padding, no inter-glyph gap
-      1 -> pad + gap = 1/8 of the character cell size
+      1 -> pad + gap = 1/8 of cell size
     """
     if len(char_svgs) != 4:
         raise ValueError("Expected exactly 4 character SVG paths for logo mode.")
@@ -342,7 +336,7 @@ def build_logo_svg_from_chars_2x2(char_svgs: List[Path], gap_flag: int) -> etree
             raise SystemExit(f"Character SVG not found: {p}")
         root = etree.fromstring(p.read_bytes(), parser=parser)
         vb = _parse_viewbox(root)
-        _strip_white_full_canvas_rects(root, vb)  # <-- key fix (removes 4 background squares)
+        _strip_white_full_canvas_rects(root, vb)
         glyph_docs.append(root)
         vbs.append(vb)
 
@@ -370,7 +364,6 @@ def build_logo_svg_from_chars_2x2(char_svgs: List[Path], gap_flag: int) -> etree
         cell_x0 = pad_x + col * (max_w + gap_x)
         cell_y0 = pad_y + row * (max_h + gap_y)
 
-        # center glyph in its cell
         tx = cell_x0 + (max_w - vbw) * 0.5 - minx
         ty = cell_y0 + (max_h - vbh) * 0.5 - miny
 
@@ -407,19 +400,6 @@ class Pulse:
         return self.amp * base
 
 
-# “Fire” hues (dispersion) as hue values.
-_FIRE_HUES: List[float] = [
-    200 / 360.0,  # cyan
-    220 / 360.0,  # blue
-    255 / 360.0,  # violet
-    300 / 360.0,  # magenta
-    330 / 360.0,  # pink-red
-    45 / 360.0,   # amber
-    70 / 360.0,   # yellow-green
-    150 / 360.0,  # green-cyan
-]
-
-
 def facet_shimmer(t: float, freq: float, phase: float) -> float:
     # Slow beat shimmer (very slow changes)
     s1 = 0.5 + 0.5 * math.sin(2.0 * math.pi * (freq * t + phase))
@@ -429,10 +409,8 @@ def facet_shimmer(t: float, freq: float, phase: float) -> float:
 
 
 def make_pulses(rng: random.Random, duration: float, theme: str) -> List[Pulse]:
-    if theme == "diamond":
+    if theme != "classic":
         pulses: List[Pulse] = []
-
-        # Very slow, long glints (reduce flicker)
         n_glints = rng.randint(1, 3)
         for _ in range(n_glints):
             t0 = rng.uniform(0.0, duration)
@@ -441,7 +419,6 @@ def make_pulses(rng: random.Random, duration: float, theme: str) -> List[Pulse]:
             power = rng.uniform(1.0, 1.20)
             pulses.append(Pulse(t0, half, amp, power=power))
 
-        # Rare gentle "breath"
         if rng.random() < 0.60:
             t0 = rng.uniform(0.0, duration)
             half = rng.uniform(4.20, 8.00)
@@ -466,6 +443,206 @@ def whiteness_at(t: float, pulses: List[Pulse]) -> float:
     for p in pulses:
         a = max(a, p.value(t))
     return _clamp01(a)
+
+
+# -------------------- Themes --------------------------------------------------
+
+@dataclass(frozen=True)
+class ThemeConfig:
+    kind: str  # "classic", "diamond", "hsv_body"
+    base_hue: Optional[float] = None  # fixed hue for hsv_body, None => per-facet/random (e.g., rainbow)
+    hue_jitter: float = 0.0           # random hue jitter around base_hue
+    body_sat_min: float = 0.0
+    body_sat_max: float = 0.0
+    body_v_min: float = 0.0
+    body_v_max: float = 1.0
+    body_v_gamma: float = 1.0         # tone shaping
+    grey_dark: Tuple[int, int, int] = (6, 6, 8)
+    grey_light: Tuple[int, int, int] = (255, 255, 255)
+
+    # Global ambient
+    amb_base: float = 0.05
+    amb_amp: float = 0.03
+    amb_freq: float = 0.025
+
+    # Glint composition
+    gl_pulse_w: float = 0.86
+    gl_shim_w: float = 0.55
+
+    # Specular response
+    spec_edge0: float = 0.48
+    spec_scale: float = 0.98
+
+    # Highlight color ("fire") in specular
+    fire_prob: float = 0.0
+    fire_hues: Optional[List[float]] = None       # if provided, pick from palette; else use body hue
+    fire_hue_jitter: float = 0.0
+    fire_hue_drift_amp: float = 0.015
+    fire_hue_drift_freq: float = 0.06
+
+    fire_gate0: float = 0.58
+    fire_sat_base_min: float = 0.12
+    fire_sat_base_max: float = 0.28
+    fire_sat_peak_min: float = 0.40
+    fire_sat_peak_max: float = 0.78
+
+    fire_sat_mul_lo: float = 0.85
+    fire_sat_mul_hi: float = 1.25
+    fire_sat_mul_punchy_prob: float = 0.25
+    fire_sat_mul_punchy_lo: float = 1.15
+    fire_sat_mul_punchy_hi: float = 1.60
+
+    # How close highlight is to white: lower => more color, higher => more white
+    fire_white_mix_min: float = 0.48
+    fire_white_mix_max: float = 0.72
+
+
+# Dispersion hues palette (diamond/rainbow-ish fire)
+_FIRE_HUES_DEFAULT: List[float] = [
+    200 / 360.0,  # cyan
+    220 / 360.0,  # blue
+    255 / 360.0,  # violet
+    300 / 360.0,  # magenta
+    330 / 360.0,  # pink-red
+    45 / 360.0,   # amber
+    70 / 360.0,   # yellow-green
+    150 / 360.0,  # green-cyan
+]
+
+
+def get_theme_config(theme: str) -> ThemeConfig:
+    if theme == "classic":
+        return ThemeConfig(kind="classic")
+
+    if theme == "diamond":
+        return ThemeConfig(
+            kind="diamond",
+            grey_dark=(6, 6, 8),
+            grey_light=(255, 255, 255),
+            fire_prob=0.36,
+            fire_hues=_FIRE_HUES_DEFAULT,
+            fire_hue_jitter=0.02,
+            fire_sat_base_min=0.12, fire_sat_base_max=0.28,
+            fire_sat_peak_min=0.45, fire_sat_peak_max=0.85,  # a bit higher peak
+            fire_white_mix_min=0.48, fire_white_mix_max=0.72,
+        )
+
+    # Metals (low body saturation, warm/cool tint)
+    if theme == "silver":
+        return ThemeConfig(
+            kind="hsv_body",
+            base_hue=210 / 360.0, hue_jitter=0.010,
+            body_sat_min=0.02, body_sat_max=0.10,
+            body_v_min=0.06, body_v_max=1.00, body_v_gamma=1.0,
+            fire_prob=0.18,
+            fire_hues=[200/360.0, 210/360.0, 225/360.0],  # cool glints
+            fire_hue_jitter=0.02,
+            fire_sat_base_min=0.10, fire_sat_base_max=0.22,
+            fire_sat_peak_min=0.28, fire_sat_peak_max=0.58,
+            fire_white_mix_min=0.60, fire_white_mix_max=0.82,
+        )
+
+    if theme == "gold":
+        return ThemeConfig(
+            kind="hsv_body",
+            base_hue=45 / 360.0, hue_jitter=0.020,
+            body_sat_min=0.10, body_sat_max=0.35,
+            body_v_min=0.05, body_v_max=1.00, body_v_gamma=1.0,
+            fire_prob=0.22,
+            fire_hues=[35/360.0, 45/360.0, 55/360.0, 30/360.0],
+            fire_hue_jitter=0.03,
+            fire_sat_base_min=0.18, fire_sat_base_max=0.36,
+            fire_sat_peak_min=0.45, fire_sat_peak_max=0.88,
+            fire_white_mix_min=0.45, fire_white_mix_max=0.68,
+        )
+
+    if theme == "bronze":
+        return ThemeConfig(
+            kind="hsv_body",
+            base_hue=28 / 360.0, hue_jitter=0.025,
+            body_sat_min=0.14, body_sat_max=0.48,
+            body_v_min=0.04, body_v_max=0.98, body_v_gamma=1.05,
+            fire_prob=0.18,
+            fire_hues=[20/360.0, 28/360.0, 35/360.0, 12/360.0],
+            fire_hue_jitter=0.03,
+            fire_sat_base_min=0.18, fire_sat_base_max=0.40,
+            fire_sat_peak_min=0.40, fire_sat_peak_max=0.85,
+            fire_white_mix_min=0.48, fire_white_mix_max=0.72,
+        )
+
+    # Gems (higher body saturation; highlights can be more colorful than diamond, but still specular-driven)
+    if theme == "ruby":
+        return ThemeConfig(
+            kind="hsv_body",
+            base_hue=350 / 360.0, hue_jitter=0.018,
+            body_sat_min=0.45, body_sat_max=0.95,
+            body_v_min=0.03, body_v_max=0.95, body_v_gamma=1.15,
+            fire_prob=0.30,
+            fire_hues=None,  # use body hue with jitter/drift
+            fire_hue_jitter=0.03,
+            fire_sat_base_min=0.22, fire_sat_base_max=0.40,
+            fire_sat_peak_min=0.55, fire_sat_peak_max=1.00,
+            fire_white_mix_min=0.35, fire_white_mix_max=0.62,
+        )
+
+    if theme == "jade":
+        return ThemeConfig(
+            kind="hsv_body",
+            base_hue=145 / 360.0, hue_jitter=0.020,
+            body_sat_min=0.20, body_sat_max=0.70,
+            body_v_min=0.05, body_v_max=0.98, body_v_gamma=1.0,
+            fire_prob=0.26,
+            fire_hues=[135/360.0, 145/360.0, 155/360.0, 120/360.0],
+            fire_hue_jitter=0.03,
+            fire_sat_base_min=0.16, fire_sat_base_max=0.32,
+            fire_sat_peak_min=0.40, fire_sat_peak_max=0.85,
+            fire_white_mix_min=0.40, fire_white_mix_max=0.70,
+        )
+
+    if theme == "sapphire":
+        return ThemeConfig(
+            kind="hsv_body",
+            base_hue=220 / 360.0, hue_jitter=0.020,
+            body_sat_min=0.35, body_sat_max=0.90,
+            body_v_min=0.03, body_v_max=0.92, body_v_gamma=1.12,
+            fire_prob=0.28,
+            fire_hues=[205/360.0, 220/360.0, 240/360.0, 255/360.0],
+            fire_hue_jitter=0.03,
+            fire_sat_base_min=0.18, fire_sat_base_max=0.34,
+            fire_sat_peak_min=0.50, fire_sat_peak_max=0.98,
+            fire_white_mix_min=0.36, fire_white_mix_max=0.64,
+        )
+
+    if theme == "emerald":
+        return ThemeConfig(
+            kind="hsv_body",
+            base_hue=140 / 360.0, hue_jitter=0.020,
+            body_sat_min=0.40, body_sat_max=0.95,
+            body_v_min=0.03, body_v_max=0.92, body_v_gamma=1.12,
+            fire_prob=0.28,
+            fire_hues=[125/360.0, 140/360.0, 155/360.0, 165/360.0],
+            fire_hue_jitter=0.03,
+            fire_sat_base_min=0.18, fire_sat_base_max=0.34,
+            fire_sat_peak_min=0.55, fire_sat_peak_max=1.00,
+            fire_white_mix_min=0.34, fire_white_mix_max=0.62,
+        )
+
+    if theme == "rainbow":
+        return ThemeConfig(
+            kind="hsv_body",
+            base_hue=None, hue_jitter=0.0,              # per-facet random hue
+            body_sat_min=0.18, body_sat_max=0.80,
+            body_v_min=0.05, body_v_max=0.98, body_v_gamma=1.0,
+            fire_prob=0.55,
+            fire_hues=_FIRE_HUES_DEFAULT,
+            fire_hue_jitter=0.06,
+            fire_sat_base_min=0.22, fire_sat_base_max=0.42,
+            fire_sat_peak_min=0.65, fire_sat_peak_max=1.00,
+            fire_white_mix_min=0.22, fire_white_mix_max=0.55,  # more color in highlights
+            spec_edge0=0.44,  # slightly more frequent brights
+        )
+
+    raise ValueError(f"Unknown theme: {theme!r}")
 
 
 # -------------------- Rendering (SVG -> PNG) ---------------------------------
@@ -613,20 +790,21 @@ def main() -> None:
     ap = argparse.ArgumentParser(description="Generate a polygon-pulse video from a character SVG or a 4-char logo.")
     g = ap.add_mutually_exclusive_group(required=True)
     g.add_argument("--char", type=str, default=None, help="Single character: uses src/character-{char}.svg")
-    g.add_argument("--chars", type=str, default=None, help="Four chars key (ignoring spaces). Combines 4 character SVGs into 2x2.")
+    g.add_argument("--chars", type=str, default=None,
+                   help="Four chars key (ignoring spaces). Combines 4 character SVGs into 2x2.")
 
     ap.add_argument("--gap", type=int, default=0, choices=[0, 1],
                     help="Logo spacing (only for --chars): 0 = no gaps (default), 1 = pad+gap = 1/8 of cell size.")
 
-    ap.add_argument("--color", type=str, default="", help="Override polygon base color (CSS color).")
+    ap.add_argument("--color", type=str, default="", help="Override base color (CSS color).")
     ap.add_argument("--bgcolor", type=str, default="", help="Override background color (CSS color).")
 
     ap.add_argument(
         "--theme",
         type=str,
         default="classic",
-        choices=["classic", "diamond"],
-        help="Animation theme: classic (default) or diamond.",
+        choices=["classic", "diamond", "silver", "gold", "bronze", "ruby", "jade", "sapphire", "emerald", "rainbow"],
+        help="Animation theme.",
     )
 
     ap.add_argument("--duration", type=float, default=12.0, help="Duration in seconds (default: 12).")
@@ -638,6 +816,8 @@ def main() -> None:
     ap.add_argument("--seed", type=int, default=None, help="Random seed for repeatable animation.")
     ap.add_argument("--keep-frames", action="store_true", help="Keep rendered PNG frames (for debugging).")
     args = ap.parse_args()
+
+    cfg = get_theme_config(args.theme)
 
     root = Path(__file__).resolve().parent.parent
     src_dir = root / "src"
@@ -678,7 +858,6 @@ def main() -> None:
     # Background override
     bgcolor = args.bgcolor.strip() or None
     if bgcolor:
-        # Remove an existing full-canvas rect if present (best-effort)
         for el in list(doc):
             if not isinstance(el.tag, str):
                 continue
@@ -707,11 +886,13 @@ def main() -> None:
     if not polys:
         raise SystemExit("No <polygon> elements found in the input SVG(s).")
 
-    # Determine base colors
+    # Determine base colors (used by classic; also used as a tint source if --color is set)
     override_color = args.color.strip() or None
     base_rgb_override: Optional[Tuple[int, int, int]] = None
+    override_hsv: Optional[Tuple[float, float, float]] = None
     if override_color:
         base_rgb_override = _parse_css_color_to_rgb(override_color)
+        override_hsv = _rgb255_to_hsv01(base_rgb_override)
 
     base_rgbs: List[Tuple[int, int, int]] = []
     for p in polys:
@@ -727,54 +908,86 @@ def main() -> None:
     rng = random.Random(args.seed)
     pulses_per_poly: List[List[Pulse]] = [make_pulses(rng, float(args.duration), args.theme) for _ in polys]
 
-    # Diamond per-polygon params
+    # Per-polygon params for non-classic themes
     poly_tone_base: List[float] = []
     poly_tone_phase: List[float] = []
     poly_shimmer_freq: List[float] = []
     poly_shimmer_phase: List[float] = []
 
+    poly_body_hue: List[float] = []
+    poly_body_sat: List[float] = []
+
     poly_fire_enabled: List[bool] = []
     poly_fire_hue: List[float] = []
     poly_fire_hue_phase: List[float] = []
-
-    # random saturation + random “how white” the fire is (so some facets are more colorful than others)
     poly_fire_sat_base: List[float] = []
     poly_fire_sat_peak: List[float] = []
     poly_fire_sat_mul: List[float] = []
     poly_fire_white_mix: List[float] = []
 
-    if args.theme == "diamond":
+    if cfg.kind != "classic":
         for _ in polys:
-            # Push tones toward extremes for contrast
+            # Strong contrast tones (dark OR light)
             if rng.random() < 0.52:
-                tone = (rng.random() ** 2.2) * 0.28            # 0..0.28
+                tone = (rng.random() ** 2.2) * 0.28
             else:
-                tone = 1.0 - (rng.random() ** 2.2) * 0.28      # 0.72..1.0
+                tone = 1.0 - (rng.random() ** 2.2) * 0.28
             poly_tone_base.append(tone)
             poly_tone_phase.append(rng.uniform(0.0, 1.0))
 
-            poly_shimmer_freq.append(rng.uniform(0.05, 0.14))  # very slow
+            poly_shimmer_freq.append(rng.uniform(0.05, 0.14))
             poly_shimmer_phase.append(rng.uniform(0.0, 1.0))
 
-            poly_fire_enabled.append(rng.random() < 0.36)      # enough to be visible
-            poly_fire_hue.append(rng.choice(_FIRE_HUES))
+            # Body hue/sat
+            if cfg.kind == "diamond":
+                # unused, but keep arrays aligned
+                poly_body_hue.append(0.0)
+                poly_body_sat.append(0.0)
+            else:
+                if override_hsv is not None:
+                    h0, s0, _v0 = override_hsv
+                    # Use override hue, but let theme influence saturation range
+                    h = h0
+                    if args.theme in {"silver", "gold", "bronze"}:
+                        # treat override as a tint: keep saturation low
+                        s = min(cfg.body_sat_max, max(cfg.body_sat_min, s0 * 0.35))
+                    else:
+                        # gems/rainbow: respect more of override saturation
+                        s = max(cfg.body_sat_min, min(cfg.body_sat_max, max(s0, rng.uniform(cfg.body_sat_min, cfg.body_sat_max))))
+                    poly_body_hue.append(h)
+                    poly_body_sat.append(s)
+                else:
+                    if cfg.base_hue is None:
+                        h = rng.random()
+                    else:
+                        h = (cfg.base_hue + rng.uniform(-cfg.hue_jitter, cfg.hue_jitter)) % 1.0
+                    s = rng.uniform(cfg.body_sat_min, cfg.body_sat_max)
+                    poly_body_hue.append(h)
+                    poly_body_sat.append(s)
+
+            # Fire/highlight params
+            poly_fire_enabled.append(rng.random() < cfg.fire_prob)
+
+            if cfg.fire_hues is not None:
+                h_fire = rng.choice(cfg.fire_hues)
+            else:
+                h_fire = poly_body_hue[-1] if poly_body_hue else (cfg.base_hue or 0.0)
+            h_fire = (h_fire + rng.uniform(-cfg.fire_hue_jitter, cfg.fire_hue_jitter)) % 1.0
+            poly_fire_hue.append(h_fire)
             poly_fire_hue_phase.append(rng.uniform(0.0, 1.0))
 
-            # (2) saturation higher but random (and not always)
-            # some facets: mild, some: punchier
-            sat_base = rng.uniform(0.12, 0.28)
-            sat_peak = rng.uniform(0.40, 0.78)
-            poly_fire_sat_base.append(sat_base)
-            poly_fire_sat_peak.append(sat_peak)
+            sb = rng.uniform(cfg.fire_sat_base_min, cfg.fire_sat_base_max)
+            sp = rng.uniform(cfg.fire_sat_peak_min, cfg.fire_sat_peak_max)
 
-            # per-facet multiplier (occasionally boosts a lot)
-            if rng.random() < 0.25:
-                poly_fire_sat_mul.append(rng.uniform(1.15, 1.60))
+            if rng.random() < cfg.fire_sat_mul_punchy_prob:
+                mul = rng.uniform(cfg.fire_sat_mul_punchy_lo, cfg.fire_sat_mul_punchy_hi)
             else:
-                poly_fire_sat_mul.append(rng.uniform(0.85, 1.25))
+                mul = rng.uniform(cfg.fire_sat_mul_lo, cfg.fire_sat_mul_hi)
 
-            # how “tinted-white” vs “more colorful” the highlight is (lower = more color)
-            poly_fire_white_mix.append(rng.uniform(0.48, 0.72))
+            poly_fire_sat_base.append(sb)
+            poly_fire_sat_peak.append(sp)
+            poly_fire_sat_mul.append(mul)
+            poly_fire_white_mix.append(rng.uniform(cfg.fire_white_mix_min, cfg.fire_white_mix_max))
 
     # Output sizing
     max_dim = int(args.max_dim)
@@ -792,54 +1005,48 @@ def main() -> None:
     try:
         renderer_used = None
 
-        # Deep blacks + hot whites for body
-        GREY_DARK = (6, 6, 8)
-        GREY_LIGHT = (255, 255, 255)
-
         for i in range(frames):
             t = i / float(fps)
 
-            if args.theme == "classic":
+            if cfg.kind == "classic":
                 for idx, poly in enumerate(polys):
                     a = whiteness_at(t, pulses_per_poly[idx])
                     poly.set("fill", _rgb_to_hex(mix_to_white(base_rgbs[idx], a)))
-
             else:
-                # slow global ambient so it never goes dead
-                global_amb = 0.05 + 0.03 * (0.5 + 0.5 * math.sin(2.0 * math.pi * (0.025 * t)))
+                global_amb = cfg.amb_base + cfg.amb_amp * (0.5 + 0.5 * math.sin(2.0 * math.pi * (cfg.amb_freq * t)))
 
                 for idx, poly in enumerate(polys):
-                    base = base_rgbs[idx]
-
-                    # body tone with slight wobble
                     tone0 = poly_tone_base[idx]
                     wobble = 0.08 * math.sin(2.0 * math.pi * (0.06 * t + poly_tone_phase[idx]))
                     tone = _clamp01(tone0 + wobble)
 
-                    body_grey = _mix_rgb(GREY_DARK, GREY_LIGHT, tone)
-                    body = mix_to_white(body_grey, global_amb)
-
-                    # if user overrides base color, preserve hue but impose facet value contrast
-                    if base_rgb_override is not None:
-                        h, s, _v = _rgb255_to_hsv01(base)
-                        v = _clamp01(0.08 + 0.92 * tone)
-                        body = _hsv01_to_rgb255(h, _clamp01(s), v)
-                        body = mix_to_white(body, global_amb)
-
-                    # glint strength
                     a = whiteness_at(t, pulses_per_poly[idx])
                     shim = facet_shimmer(t, poly_shimmer_freq[idx], poly_shimmer_phase[idx])
-                    gl = _clamp01(0.86 * a + 0.55 * shim)
+                    gl = _clamp01(cfg.gl_pulse_w * a + cfg.gl_shim_w * shim)
 
-                    # specular whites
-                    spec = _smoothstep(0.48, 1.00, gl)
-                    spec_amt = spec * 0.98
+                    spec = _smoothstep(cfg.spec_edge0, 1.00, gl)
+                    spec_amt = spec * cfg.spec_scale
 
-                    # dispersion color appears inside specular, with per-facet randomness
+                    # Body
+                    if cfg.kind == "diamond":
+                        body_grey = _mix_rgb(cfg.grey_dark, cfg.grey_light, tone)
+                        body = mix_to_white(body_grey, global_amb)
+                    else:
+                        # value shaped by gamma for deeper shadows
+                        v = cfg.body_v_min + (cfg.body_v_max - cfg.body_v_min) * (tone ** cfg.body_v_gamma)
+                        # slightly reduce sat in darker facets for depth
+                        s0 = poly_body_sat[idx]
+                        s = _clamp01(s0 * (0.70 + 0.30 * tone))
+                        h = poly_body_hue[idx]
+                        body = _hsv01_to_rgb255(h, s, v)
+                        body = mix_to_white(body, global_amb)
+
+                    # Highlight / fire (only affects specular)
                     if poly_fire_enabled[idx]:
-                        fire_gate = _smoothstep(0.58, 1.00, gl)
+                        fire_gate = _smoothstep(cfg.fire_gate0, 1.00, gl)
 
-                        hue = (poly_fire_hue[idx] + 0.015 * math.sin(2.0 * math.pi * (0.06 * t + poly_fire_hue_phase[idx]))) % 1.0
+                        hue = (poly_fire_hue[idx] +
+                               cfg.fire_hue_drift_amp * math.sin(2.0 * math.pi * (cfg.fire_hue_drift_freq * t + poly_fire_hue_phase[idx]))) % 1.0
 
                         sat = poly_fire_sat_base[idx] + (poly_fire_sat_peak[idx] - poly_fire_sat_base[idx]) * fire_gate
                         sat *= poly_fire_sat_mul[idx]
@@ -847,10 +1054,9 @@ def main() -> None:
 
                         fire_rgb = _hsv01_to_rgb255(hue, sat, 1.0)
 
-                        # “tinted white” amount varies per facet, so some are punchier than others
+                        # tinted white: per facet randomness
                         tw = _mix_rgb(fire_rgb, (255, 255, 255), poly_fire_white_mix[idx])
 
-                        # apply as part of the specular
                         rgb = _mix_rgb(body, tw, spec_amt)
                     else:
                         rgb = _mix_rgb(body, (255, 255, 255), spec_amt)
