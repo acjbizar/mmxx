@@ -1,8 +1,6 @@
 
 # TODO
 
-- [ ] Experiment with animating the polygon colors.
-
 # Done
 
 - [x] Sketch letter A.
@@ -40,3 +38,4 @@
 - [x] Consider adding numbers.
 - [x] Add 4 character squares/logos for LOVE, MM25, ADHD, DEID, LOGO, 2222, and more?
 - [x] Consider inverse versions of the glyphs as alts.
+- [x] Experiment with animating the polygon colors.
