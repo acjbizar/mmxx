@@ -1,6 +1,8 @@
 
 # TODO
 
+- [ ] Consider animating transition between characters.
+
 # Done
 
 - [x] Sketch letter A.
