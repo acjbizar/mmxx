@@ -21,9 +21,11 @@ Themes:
 - silver / gold / bronze: metallic hue drift + colored sheen + glints
 - ruby / jade / sapphire / emerald: gem saturation + absorption-like depth + glints
 - rainbow: per-facet hue + iridescent drift + colorful highlights
-- minecraft: samples the real Grass Block (carried side texture) pixels (16×16) per polygon centroid.
-            Animation is done via facet lighting + "pixel sparkle" (blending to neighbor texture pixels),
-            so it stays Minecraft-y but actually moves.
+- minecraft: samples the real Grass Block (carried side texture) pixels (16×16) per polygon centroid,
+            animated via facet lighting + neighbour "pixel sparkle"
+- deidee: cycles polygon colors ONLY between samples of:
+            fill(random(0, .5), random(.5, 1), random(0, .75), .5)
+          i.e. RGB in that distribution, alpha=0.5. No shading, no whitening, no extra colors.
 
 Output:
   dist/videos/character-{char}.{ext}
@@ -102,6 +104,27 @@ def _style_get(style: str, key: str) -> Optional[str]:
         if k.strip().lower() == key.lower():
             return v.strip()
     return None
+
+
+def _style_set(style: str, key: str, value: str) -> str:
+    """
+    Set/replace a key in an inline style string (very small helper).
+    """
+    key_l = key.strip().lower()
+    items: List[Tuple[str, str]] = []
+    if style:
+        parts = [p.strip() for p in style.split(";") if p.strip()]
+        for p in parts:
+            if ":" not in p:
+                continue
+            k, v = p.split(":", 1)
+            k = k.strip()
+            v = v.strip()
+            if k.lower() == key_l:
+                continue
+            items.append((k, v))
+    items.append((key.strip(), value.strip()))
+    return "; ".join(f"{k}: {v}" for k, v in items)
 
 
 def _resolve_fill(el: etree._Element) -> Optional[str]:
@@ -187,6 +210,14 @@ def _smoothstep(edge0: float, edge1: float, x: float) -> float:
     return t * t * (3.0 - 2.0 * t)
 
 
+def _cosine_ease(x: float) -> float:
+    """
+    Smooth 0..1 -> 0..1 (cosine).
+    """
+    x = _clamp01(x)
+    return 0.5 - 0.5 * math.cos(math.pi * x)
+
+
 def _rgb255_to_hsv01(rgb: Tuple[int, int, int]) -> Tuple[float, float, float]:
     r, g, b = rgb
     return colorsys.rgb_to_hsv(r / 255.0, g / 255.0, b / 255.0)
@@ -255,10 +286,6 @@ def _poly_centroid_local(poly: etree._Element) -> Optional[Tuple[float, float]]:
 # -------------------- Minecraft texture sampling ------------------------------
 
 def _load_minecraft_texture_16x16(source: str) -> Tuple[List[Tuple[int, int, int]], int, int]:
-    """
-    Returns (pixels_flat, w, h) where pixels_flat[y*w + x] = (r,g,b)
-    Downscales to 16x16 with nearest-neighbour.
-    """
     if Image is None:
         raise RuntimeError("Minecraft theme requires Pillow. Install with: py -m pip install pillow")
 
@@ -289,10 +316,6 @@ def _load_minecraft_texture_16x16(source: str) -> Tuple[List[Tuple[int, int, int
 
 
 def _glyph_viewbox_for_element(el: etree._Element, fallback: Tuple[float, float, float, float]) -> Tuple[float, float, float, float]:
-    """
-    In --chars mode, each glyph is wrapped in a <g> with data-minx/miny/vbw/vbh.
-    Use that so minecraft sampling is per-glyph (16x16 per character), not per whole logo canvas.
-    """
     cur = el
     while cur is not None and isinstance(cur.tag, str):
         vbw = cur.get("data-vbw")
@@ -483,6 +506,8 @@ def facet_shimmer(t: float, freq: float, phase: float) -> float:
 
 
 def make_pulses(rng: random.Random, duration: float, theme: str) -> List[Pulse]:
+    if theme == "deidee":
+        return []
     if theme != "classic":
         pulses: List[Pulse] = []
         n_glints = rng.randint(2, 4) if theme == "minecraft" else rng.randint(1, 3)
@@ -522,7 +547,7 @@ def whiteness_at(t: float, pulses: List[Pulse]) -> float:
 
 @dataclass(frozen=True)
 class ThemeConfig:
-    kind: str  # "classic", "diamond", "hsv_body", "minecraft"
+    kind: str  # "classic", "diamond", "hsv_body", "minecraft", "deidee"
     base_hue: Optional[float] = None
     hue_jitter: float = 0.0
 
@@ -593,6 +618,9 @@ def get_theme_config(theme: str) -> ThemeConfig:
     if theme == "classic":
         return ThemeConfig(kind="classic")
 
+    if theme == "deidee":
+        return ThemeConfig(kind="deidee")
+
     if theme == "diamond":
         return ThemeConfig(
             kind="diamond",
@@ -609,7 +637,6 @@ def get_theme_config(theme: str) -> ThemeConfig:
         )
 
     if theme == "minecraft":
-        # Matte + strong contrast; animation comes from lighting + pixel-neighbour sparkle (not gloss).
         return ThemeConfig(
             kind="minecraft",
             amb_base=0.02,
@@ -623,7 +650,6 @@ def get_theme_config(theme: str) -> ThemeConfig:
             fire_prob=0.0,
         )
 
-    # Global non-diamond
     common = dict(
         kind="hsv_body",
         amb_base=0.06,
@@ -944,6 +970,7 @@ def main() -> None:
             "ruby", "jade", "sapphire", "emerald",
             "rainbow",
             "minecraft",
+            "deidee",
         ],
         help="Animation theme.",
     )
@@ -1029,6 +1056,8 @@ def main() -> None:
     if not polys:
         raise SystemExit("No <polygon> elements found in the input SVG(s).")
 
+    rng = random.Random(args.seed)
+
     # Base colors for classic mode
     override_color = args.color.strip() or None
     base_rgb_override: Optional[Tuple[int, int, int]] = None
@@ -1048,10 +1077,48 @@ def main() -> None:
         except Exception:
             base_rgbs.append((0, 0, 0))
 
-    rng = random.Random(args.seed)
     pulses_per_poly: List[List[Pulse]] = [make_pulses(rng, float(args.duration), args.theme) for _ in polys]
 
-    # Per-poly params
+    # ---------------- deidee data ----------------
+    de_alpha = 0.5
+    de_colors_per_poly: List[List[Tuple[int, int, int]]] = []
+    de_seg_dur: List[float] = []
+    de_phase: List[float] = []
+
+    if cfg.kind == "deidee":
+        # each polygon cycles through K colors, smoothly
+        for _ in polys:
+            k = rng.randint(4, 8)
+            cols: List[Tuple[int, int, int]] = []
+            for _j in range(k):
+                r = int(round(rng.uniform(0.0, 0.5) * 255.0))
+                g = int(round(rng.uniform(0.5, 1.0) * 255.0))
+                b = int(round(rng.uniform(0.0, 0.75) * 255.0))
+                cols.append((max(0, min(255, r)), max(0, min(255, g)), max(0, min(255, b))))
+            de_colors_per_poly.append(cols)
+
+            # slower iteration so it feels intentional, not flickery
+            de_seg_dur.append(rng.uniform(0.90, 2.60))   # seconds per transition
+            de_phase.append(rng.uniform(0.0, 10.0))      # desync polygons a bit
+
+        # force opacity to win even if a polygon has style-based opacity
+        for poly in polys:
+            poly.set("fill-opacity", f"{de_alpha:.3f}")
+            st = (poly.get("style") or "").strip()
+            poly.set("style", _style_set(st, "fill-opacity", f"{de_alpha:.3f}"))
+
+    # ---------------- Minecraft per-poly sampled pixels (base + neighbours) ----------------
+    mc_tex: Optional[List[Tuple[int, int, int]]] = None
+    mc_tw = mc_th = 0
+    mc_base_rgb: List[Tuple[int, int, int]] = []
+    mc_hi_rgb: List[Tuple[int, int, int]] = []
+    mc_lo_rgb: List[Tuple[int, int, int]] = []
+    mc_alt_rgb: List[Tuple[int, int, int]] = []
+    mc_grain: List[float] = []
+    mc_flicker_freq: List[float] = []
+    mc_flicker_phase: List[float] = []
+
+    # Shared non-classic arrays (for diamond/hsv_body/minecraft)
     poly_tone_base: List[float] = []
     poly_tone_phase: List[float] = []
     poly_shimmer_freq: List[float] = []
@@ -1068,23 +1135,12 @@ def main() -> None:
     poly_fire_sat_mul: List[float] = []
     poly_fire_white_mix: List[float] = []
 
-    # Minecraft per-poly sampled pixels (base + neighbours)
-    mc_tex: Optional[List[Tuple[int, int, int]]] = None
-    mc_tw = mc_th = 0
-    mc_base_rgb: List[Tuple[int, int, int]] = []
-    mc_hi_rgb: List[Tuple[int, int, int]] = []
-    mc_lo_rgb: List[Tuple[int, int, int]] = []
-    mc_alt_rgb: List[Tuple[int, int, int]] = []
-    mc_grain: List[float] = []
-    mc_flicker_freq: List[float] = []
-    mc_flicker_phase: List[float] = []
-
     if cfg.kind == "minecraft":
         mc_tex, mc_tw, mc_th = _load_minecraft_texture_16x16(args.minecraft_texture)
 
-    if cfg.kind != "classic":
+    if cfg.kind not in ("classic", "deidee"):
         for idx, poly in enumerate(polys):
-            # tone (overall facet lightness baseline)
+            # tone baseline
             if cfg.kind == "diamond":
                 if rng.random() < 0.52:
                     tone = (rng.random() ** 2.2) * 0.28
@@ -1104,7 +1160,7 @@ def main() -> None:
             poly_shimmer_freq.append(rng.uniform(0.05, 0.14))
             poly_shimmer_phase.append(rng.uniform(0.0, 1.0))
 
-            # body hue/sat (unused for diamond/minecraft, but kept aligned)
+            # hue/sat body (unused for diamond/minecraft but kept aligned)
             if cfg.kind in ("diamond", "minecraft"):
                 poly_body_hue.append(0.0)
                 poly_body_sat.append(0.0)
@@ -1124,7 +1180,7 @@ def main() -> None:
                     poly_body_hue.append(h)
                     poly_body_sat.append(s)
 
-            # fire settings (ignored for minecraft: fire_prob=0)
+            # fire (if enabled by theme)
             poly_fire_enabled.append(rng.random() < cfg.fire_prob)
             if cfg.fire_hues is not None:
                 h_fire = rng.choice(cfg.fire_hues)
@@ -1136,7 +1192,6 @@ def main() -> None:
 
             sb = rng.uniform(cfg.fire_sat_base_min, cfg.fire_sat_base_max)
             sp = rng.uniform(cfg.fire_sat_peak_min, cfg.fire_sat_peak_max)
-
             if rng.random() < cfg.fire_sat_mul_punchy_prob:
                 mul = rng.uniform(cfg.fire_sat_mul_punchy_lo, cfg.fire_sat_mul_punchy_hi)
             else:
@@ -1147,7 +1202,7 @@ def main() -> None:
             poly_fire_sat_mul.append(mul)
             poly_fire_white_mix.append(rng.uniform(cfg.fire_white_mix_min, cfg.fire_white_mix_max))
 
-            # minecraft base/neighbor pixels
+            # minecraft neighbor sampling
             if cfg.kind == "minecraft":
                 c = _poly_centroid_local(poly) or (0.5 * 240.0, 0.5 * 240.0)
                 gx, gy = c
@@ -1162,12 +1217,10 @@ def main() -> None:
                 u_px = int(round(nx * (mc_tw - 1)))
                 v_px = int(round(ny * (mc_th - 1)))
 
-                # tiny stable offset so facets don't all line up the same
                 if rng.random() < 0.35:
                     u_px = max(0, min(mc_tw - 1, u_px + rng.choice([-1, 0, 1])))
                     v_px = max(0, min(mc_th - 1, v_px + rng.choice([-1, 0, 1])))
 
-                # gather neighbor samples
                 coords = [
                     (u_px, v_px),
                     (max(0, u_px - 1), v_px),
@@ -1175,13 +1228,10 @@ def main() -> None:
                     (u_px, max(0, v_px - 1)),
                     (u_px, min(mc_th - 1, v_px + 1)),
                 ]
-
                 samples = [(uv, mc_tex[uv[1] * mc_tw + uv[0]]) for uv in coords]  # type: ignore[index]
                 base = samples[0][1]
                 hi = max(samples, key=lambda it: _luma(it[1]))[1]
                 lo = min(samples, key=lambda it: _luma(it[1]))[1]
-
-                # alt: a random neighbor (not base) for "pixel sparkle"
                 alt = rng.choice(samples[1:])[1] if len(samples) > 1 else base
 
                 mc_base_rgb.append(base)
@@ -1189,11 +1239,8 @@ def main() -> None:
                 mc_lo_rgb.append(lo)
                 mc_alt_rgb.append(alt)
 
-                # grain: stronger for dirt region (lower part of texture)
                 dirtish = 1.0 if v_px >= int(mc_th * 0.30) else 0.0
                 mc_grain.append(rng.uniform(0.84, 1.22) if dirtish else rng.uniform(0.90, 1.14))
-
-                # extra per-facet flicker
                 mc_flicker_freq.append(rng.uniform(0.05, 0.13))
                 mc_flicker_phase.append(rng.uniform(0.0, 1.0))
 
@@ -1220,7 +1267,31 @@ def main() -> None:
                 for idx, poly in enumerate(polys):
                     a = whiteness_at(t, pulses_per_poly[idx])
                     poly.set("fill", _rgb_to_hex(mix_to_white(base_rgbs[idx], a)))
+
+            elif cfg.kind == "deidee":
+                # smooth cycling between random samples; keep alpha constant
+                for idx, poly in enumerate(polys):
+                    cols = de_colors_per_poly[idx]
+                    k = len(cols)
+                    seg = de_seg_dur[idx]
+                    ph = de_phase[idx]
+
+                    pos = (t + ph) / seg
+                    i0 = int(math.floor(pos)) % k
+                    i1 = (i0 + 1) % k
+                    f = pos - math.floor(pos)
+                    u = _cosine_ease(f)
+
+                    rgb = _mix_rgb(cols[i0], cols[i1], u)
+                    poly.set("fill", _rgb_to_hex(rgb))
+
+                    # enforce transparency every frame (wins over inherited styles)
+                    poly.set("fill-opacity", f"{de_alpha:.3f}")
+                    st = (poly.get("style") or "").strip()
+                    poly.set("style", _style_set(st, "fill-opacity", f"{de_alpha:.3f}"))
+
             else:
+                # existing non-classic themes
                 global_amb = cfg.amb_base + cfg.amb_amp * (0.5 + 0.5 * math.sin(2.0 * math.pi * (cfg.amb_freq * t)))
 
                 for idx, poly in enumerate(polys):
@@ -1237,39 +1308,29 @@ def main() -> None:
                     spec_amt = spec * cfg.spec_scale
 
                     if cfg.kind == "minecraft":
-                        # ---- Minecraft animation: texture stays, but lighting + neighbour sparkle animates ----
                         base = mc_base_rgb[idx]
                         hi = mc_hi_rgb[idx]
                         lo = mc_lo_rgb[idx]
                         alt = mc_alt_rgb[idx]
 
-                        # per-facet flicker (slow, irregular)
                         f = 0.5 + 0.5 * math.sin(2.0 * math.pi * (mc_flicker_freq[idx] * t + mc_flicker_phase[idx]))
-                        f = f ** 1.8  # make peaks more distinct
+                        f = f ** 1.8
 
-                        # dynamic shade: stronger than before so you can see animation
-                        # - tone gives baseline contrast
-                        # - gl gives “lighting events”
-                        # - f adds subtle jitter
                         shade = (0.62 + 0.78 * tone) * mc_grain[idx]
                         shade *= (0.90 + 0.22 * f)
                         shade *= (0.92 + 0.28 * _smoothstep(0.20, 0.95, gl))
 
                         body = _scale_rgb(base, shade)
 
-                        # bring in darker neighbour for depth (Minecraft dirt/grass shadowing)
                         shadow_amt = 0.20 + 0.35 * _smoothstep(0.00, 0.55, 1.0 - tone)
                         body = _mix_rgb(body, _scale_rgb(lo, shade * 0.92), shadow_amt * 0.35)
 
-                        # ambient lift: towards brighter neighbour (not to white)
                         body = _mix_rgb(body, _scale_rgb(hi, shade * 1.02), global_amb)
 
-                        # "pixel sparkle": during glints, blend toward an adjacent texture pixel
                         sparkle = _smoothstep(0.35, 1.00, gl)
                         sparkle *= (0.15 + 0.55 * f)
                         body = _mix_rgb(body, _scale_rgb(alt, shade * 1.04), sparkle * 0.55)
 
-                        # highlight: use hi pixel, and a tiny bit of white at very top peaks
                         body = _mix_rgb(body, _scale_rgb(hi, shade * 1.22), spec_amt * (0.35 + 0.35 * f))
                         if spec_amt > 0.85:
                             body = _mix_rgb(body, (255, 255, 255), (spec_amt - 0.85) * 0.10)
@@ -1277,7 +1338,6 @@ def main() -> None:
                         poly.set("fill", _rgb_to_hex(body))
                         continue
 
-                    # ---- existing non-minecraft themes (unchanged) ----
                     if cfg.kind == "diamond":
                         body_grey = _mix_rgb(cfg.grey_dark, cfg.grey_light, tone)
                         body2 = mix_to_white(body_grey, global_amb)
