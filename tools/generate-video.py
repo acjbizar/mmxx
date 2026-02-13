@@ -803,6 +803,52 @@ def get_theme_config(theme: str) -> ThemeConfig:
             fire_white_mix_max=0.30,
         ))
 
+    if theme == "fire":
+        return _cfg_merge(common, dict(
+            base_hue=25/360.0, hue_jitter=0.070,
+            body_sat_min=0.85, body_sat_max=1.00,
+            body_v_min=0.12, body_v_max=0.90, body_v_gamma=1.08,
+            body_sat_mul=1.10,
+            sat_dark_boost=0.38,
+            hue_tone_amp=0.012,
+            hue_shimmer_amp=0.020,
+            val_shimmer_amp=0.030,
+
+            spec_edge0=0.46, spec_scale=0.92,
+            sheen_mix=0.10, sheen_sat_boost=0.36, sheen_hue_shift=0.018,
+
+            # lots of “hot” glints; keep them colorful, not white
+            fire_prob=0.92,
+            fire_hues=[0/360.0, 12/360.0, 25/360.0, 40/360.0, 55/360.0, 65/360.0, 330/360.0],
+            fire_hue_jitter=0.11,
+            fire_sat_base_min=0.40, fire_sat_base_max=0.80,
+            fire_sat_peak_min=0.90, fire_sat_peak_max=1.00,
+            fire_white_mix_min=0.05, fire_white_mix_max=0.22,
+        ))
+
+    if theme == "ice":
+        return _cfg_merge(common, dict(
+            base_hue=205/360.0, hue_jitter=0.055,
+            body_sat_min=0.75, body_sat_max=1.00,
+            body_v_min=0.18, body_v_max=0.96, body_v_gamma=0.95,
+            body_sat_mul=1.08,
+            sat_dark_boost=0.16,
+            hue_tone_amp=0.010,
+            hue_shimmer_amp=0.020,
+            val_shimmer_amp=0.040,
+
+            spec_edge0=0.52, spec_scale=0.92,
+            sheen_mix=0.22, sheen_sat_boost=0.30, sheen_hue_shift=-0.010,
+
+            # prismatic “ice” glints; allow some white, but not always
+            fire_prob=0.62,
+            fire_hues=[175/360.0, 195/360.0, 210/360.0, 225/360.0, 245/360.0, 275/360.0],
+            fire_hue_jitter=0.10,
+            fire_sat_base_min=0.25, fire_sat_base_max=0.55,
+            fire_sat_peak_min=0.75, fire_sat_peak_max=1.00,
+            fire_white_mix_min=0.12, fire_white_mix_max=0.35,
+        ))
+
     raise ValueError(f"Unknown theme: {theme!r}")
 
 
@@ -971,6 +1017,7 @@ def main() -> None:
             "rainbow",
             "minecraft",
             "deidee",
+            "fire", "ice",
         ],
         help="Animation theme.",
     )
