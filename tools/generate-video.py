@@ -47,7 +47,7 @@ Themes:
 - minecraft: samples from Minecraft grass block texture (animated glints, texture remains recognizable)
 - deidee: interpolates between random RGBA samples from:
     fill(random(0, .5), random(.5, 1), random(0, .75), .5)
-- heart: pulsating graphical heart (new silhouette) with the *older* lively colors/animation feel
+- heart: pulsating graphical heart (silhouette) with valentine-like palette + smoother pulse growth
 - static: TV-like noise/static (mostly greys with rare color specks)
 - champagne: sparkly-wine bubbles rising upward (warm liquid + bright bubble trails)
 
@@ -363,7 +363,6 @@ def _glyph_viewbox_for_element(el: etree._Element, fallback: Tuple[float, float,
 
 
 def _centroid_in_glyph_norm(poly: etree._Element, root_vb: Tuple[float, float, float, float]) -> Tuple[float, float]:
-    # Use polygon local centroid, mapped into the nearest glyph viewBox (no group translate).
     vb = _glyph_viewbox_for_element(poly, root_vb)
     minx, miny, vbw, vbh = vb
     c = _poly_centroid_local(poly)
@@ -499,14 +498,11 @@ def _safe_logo_key(items: List[Tuple[str, int, str]]) -> str:
 
 
 def _resolve_glyph_svg_path(src_dir: Path, prefix: str, token: str, disp: str) -> Path:
-    # 1) character-a.svg style (if possible)
     if len(disp) == 1:
         p1 = src_dir / f"{prefix}-{disp}.svg"
         if p1.is_file():
             return p1
-    # 2) character-u0061.svg style
-    p2 = src_dir / f"{prefix}-{token}.svg"
-    return p2
+    return src_dir / f"{prefix}-{token}.svg"
 
 
 # -------------------- Logo building (combine glyph SVGs into grid) ------------
@@ -736,7 +732,6 @@ def whiteness_at(t: float, pulses: List[Pulse]) -> float:
 
 
 def facet_shimmer(t: float, freq: float, phase: float) -> float:
-    # "diamond-ish" shimmer: product of two sines, squared.
     s1 = 0.5 + 0.5 * math.sin(2.0 * math.pi * (freq * t + phase))
     s2 = 0.5 + 0.5 * math.sin(2.0 * math.pi * ((freq * 0.47) * t + (phase * 1.63)))
     s = s1 * s2
@@ -747,7 +742,7 @@ def facet_shimmer(t: float, freq: float, phase: float) -> float:
 
 @dataclass(frozen=True)
 class ThemeConfig:
-    kind: str  # "classic", "diamond", "hsv", "minecraft", "deidee", "heart", "static", "champagne", "matrix"
+    kind: str
     base_hue: Optional[float] = None
     hue_jitter: float = 0.0
 
@@ -778,7 +773,6 @@ class ThemeConfig:
     sheen_sat_boost: float = 0.15
     sheen_hue_shift: float = 0.0
 
-    # dispersion "fire"
     fire_prob: float = 0.0
     fire_hues: Optional[List[float]] = None
     fire_hue_jitter: float = 0.0
@@ -1122,11 +1116,9 @@ class Bubble:
 # -------------------- Pulse schedules ----------------------------------------
 
 def make_pulses(rng: random.Random, duration: float, theme: str) -> List[Pulse]:
-    # Themes that use their own logic
     if theme in {"deidee", "matrix", "heart", "static", "champagne"}:
         return []
 
-    # Slower, more "facet-like" pulses for most non-classic themes
     if theme != "classic":
         pulses: List[Pulse] = []
         n_glints = rng.randint(1, 3)
@@ -1145,7 +1137,6 @@ def make_pulses(rng: random.Random, duration: float, theme: str) -> List[Pulse]:
 
         return pulses
 
-    # Classic: quicker pulses
     n = rng.randint(3, 7)
     pulses: List[Pulse] = []
     for _ in range(n):
@@ -1198,14 +1189,15 @@ def _hash01(x: float) -> float:
     return _fract(math.sin(x) * 43758.5453123)
 
 
-# -------------------- Heart silhouette + pulse (NEW SHAPE, OLD "FEEL") --------
+# -------------------- Heart silhouette + pulse -------------------------------
 
-def _beat_wave_old_feel(t: float) -> float:
+def _beat_wave_smooth(t: float) -> float:
     """
-    A slightly snappier, lively beat (closer to the earlier vibe),
-    but not "too fast". Returns 0..1.
+    Smooth "heartbeat" envelope: two bumps per cycle, but with extra easing so
+    growth/decay feels less steppy on polygon mosaics.
+    Returns 0..1.
     """
-    cycle = 2.15  # a bit quicker than the last "slow" version, still relaxed
+    cycle = 2.25
     p = (t / cycle) % 1.0
 
     def bump(phase: float, center: float, width: float) -> float:
@@ -1213,22 +1205,24 @@ def _beat_wave_old_feel(t: float) -> float:
         if d >= width:
             return 0.0
         x = d / width
+        # cosine bell (C1 continuous)
         return 0.5 * (1.0 + math.cos(math.pi * x))
 
-    b1 = bump(p, 0.16, 0.10)
-    b2 = bump(p, 0.31, 0.13)
-    tail = 0.22 * (1.0 - _smoothstep(0.31, 0.96, p))
+    b1 = bump(p, 0.16, 0.11)
+    b2 = bump(p, 0.33, 0.15)
+    tail = 0.20 * (1.0 - _smoothstep(0.34, 0.98, p))
 
-    pulse = 0.06 + 0.55 * b1 + 1.00 * b2 + tail
-    pulse = _clamp01(pulse)
-    return _clamp01(pulse ** 1.04)
+    raw = 0.04 + 0.50 * b1 + 1.00 * b2 + tail
+    raw = _clamp01(raw)
+
+    # extra easing to make growth/decay smoother visually
+    eased = _cosine_ease(raw)
+    # blend so it still has "punch", but smoother overall
+    pulse = 0.55 * raw + 0.45 * eased
+    return _clamp01(pulse)
 
 
 def _heart_icon_val(x: float, y: float) -> float:
-    """
-    Implicit heart function tuned toward a simple icon silhouette.
-    Negative is inside.
-    """
     x = abs(x)
     x *= 1.12
     y *= 1.02
@@ -1252,14 +1246,10 @@ def _compute_heart_fit(margin: float = 0.02) -> Dict[str, float]:
         for i in range(steps):
             x = scan_min + (scan_max - scan_min) * (i / (steps - 1))
             if _heart_icon_val(x, y) <= 0.0:
-                if x < minx:
-                    minx = x
-                if x > maxx:
-                    maxx = x
-                if y < miny:
-                    miny = y
-                if y > maxy:
-                    maxy = y
+                minx = min(minx, x)
+                maxx = max(maxx, x)
+                miny = min(miny, y)
+                maxy = max(maxy, y)
 
     if not (minx < maxx and miny < maxy):
         return {"scale": 1.20, "cx": 0.0, "cy": 0.0, "margin": margin}
@@ -1275,16 +1265,11 @@ def _compute_heart_fit(margin: float = 0.02) -> Dict[str, float]:
     return {"scale": float(scale), "cx": float(cx), "cy": float(cy), "margin": float(margin)}
 
 
-def _heart_mask_icon(nx: float, ny: float, pulse: float, fit: Dict[str, float]) -> Tuple[float, float]:
-    """
-    Returns (mask, glow):
-      - mask ~1 inside heart, ~0 outside (soft edge)
-      - glow peaks near boundary
-    """
+def _heart_mask_icon_single(nx: float, ny: float, pulse: float, fit: Dict[str, float]) -> Tuple[float, float]:
     xs = nx * 2.0 - 1.0
     ys = (1.0 - ny) * 2.0 - 1.0
 
-    beat_scale = 1.0 + 0.10 * pulse
+    beat_scale = 1.0 + 0.11 * pulse
     s = fit["scale"] * beat_scale
 
     x = (xs / s) + fit["cx"]
@@ -1294,9 +1279,37 @@ def _heart_mask_icon(nx: float, ny: float, pulse: float, fit: Dict[str, float]) 
 
     edge = 0.032
     mask = 1.0 - _smoothstep(-edge, edge, val)
-
     glow = math.exp(-abs(val) * 9.5)
     return (_clamp01(mask), _clamp01(glow))
+
+
+def _heart_mask_icon_aa(nx: float, ny: float, pulse: float, fit: Dict[str, float]) -> Tuple[float, float]:
+    """
+    Cheap AA for the heart boundary: sample multiple nearby points and average.
+    This makes the growth (scale) feel smoother on a polygon-mosaic surface.
+    """
+    eps = 0.0026  # ~ "subpixel" in normalized coords for 1080p-ish output
+    samples = [
+        (0.0, 0.0),
+        (+eps, 0.0),
+        (-eps, 0.0),
+        (0.0, +eps),
+        (0.0, -eps),
+        (+eps * 0.7, +eps * 0.7),
+        (-eps * 0.7, +eps * 0.7),
+        (+eps * 0.7, -eps * 0.7),
+        (-eps * 0.7, -eps * 0.7),
+    ]
+
+    m_sum = 0.0
+    g_sum = 0.0
+    for dx, dy in samples:
+        m, g = _heart_mask_icon_single(_clamp01(nx + dx), _clamp01(ny + dy), pulse, fit)
+        m_sum += m
+        g_sum += g
+
+    inv = 1.0 / float(len(samples))
+    return (_clamp01(m_sum * inv), _clamp01(g_sum * inv))
 
 
 # -------------------- Champagne (bubbles) ------------------------------------
@@ -1306,7 +1319,6 @@ def _bubble_influence(nx: float, ny: float, bx: float, by: float, r: float) -> f
     dy = ny - by
     d2 = dx * dx + dy * dy
     rr = max(1e-6, r * r)
-    # gaussian-ish falloff
     return math.exp(-d2 / (2.2 * rr))
 
 
@@ -1501,7 +1513,6 @@ def main() -> None:
     fps = int(args.fps)
 
     # ---------------- Theme precompute ----------------
-    # Diamond / HSV: per-poly HSV bases + shimmer
     poly_hsv: List[PolyHSV] = []
     if cfg.kind in {"diamond", "hsv"}:
         for idx in range(len(polys)):
@@ -1511,7 +1522,6 @@ def main() -> None:
             freq = rng.uniform(0.18, 0.85)
             phase = rng.uniform(0.0, 1.0)
 
-            # default "facet" value distribution with contrast (more brights, still some deep darks)
             u = rng.random()
             if u < 0.18:
                 v = (u / 0.18) * 0.10
@@ -1524,13 +1534,11 @@ def main() -> None:
             v = _clamp01(v)
 
             if cfg.kind == "diamond":
-                # greys: store as HSV with very low sat (we'll mostly ignore hue)
                 h = (210/360.0) + rng.uniform(-0.01, 0.01)
                 s = rng.uniform(0.00, 0.10)
                 sat_mul = 1.0
                 v_mul = rng.uniform(0.90, 1.10)
             else:
-                # colorful body
                 if cfg.base_hue is None:
                     h = (nx + rng.uniform(-0.05, 0.05)) % 1.0
                 else:
@@ -1541,7 +1549,6 @@ def main() -> None:
                 s = rng.uniform(cfg.body_sat_min, cfg.body_sat_max)
                 sat_mul = rng.uniform(0.85, 1.25)
 
-                # value: slight vertical gradient (lighter toward top) + gamma shaping
                 ug = rng.random()
                 vg = cfg.body_v_min + (cfg.body_v_max - cfg.body_v_min) * (ug ** cfg.body_v_gamma)
                 vg = _clamp01(vg + 0.10 * (0.5 - ny))
@@ -1552,7 +1559,6 @@ def main() -> None:
             if cfg.fire_hues:
                 fh = rng.choice(cfg.fire_hues)
             else:
-                # default "fire" around base hue-ish
                 fh = (h + rng.uniform(-0.10, 0.10)) % 1.0
 
             fire_sat_mul = rng.uniform(cfg.fire_sat_mul_lo, cfg.fire_sat_mul_hi)
@@ -1569,27 +1575,24 @@ def main() -> None:
                 fire_white_mix=fire_white_mix,
             ))
 
-    # Minecraft: texture lookup per polygon
+    # Minecraft
     mc_pixels: List[Tuple[int, int, int]] = []
     mc_w = mc_h = 0
     mc_u: List[float] = []
     mc_v: List[float] = []
     mc_freq: List[float] = []
     mc_phase: List[float] = []
-    mc_glint_bias: List[float] = []
     if cfg.kind == "minecraft":
         mc_pixels, mc_w, mc_h = _load_minecraft_texture_16x16(args.minecraft_texture)
         for idx in range(len(polys)):
-            # use glyph-local coords so texture "sticks" per glyph in logos
             u = glyph_nx[idx]
             v = glyph_ny[idx]
             mc_u.append(u)
             mc_v.append(v)
             mc_freq.append(rng.uniform(0.10, 0.45))
             mc_phase.append(rng.uniform(0.0, 1.0))
-            mc_glint_bias.append(rng.uniform(0.0, 1.0))
 
-    # deidee: per-poly color lists + timings
+    # deidee
     de_alpha = 0.5
     de_colors_per_poly: List[List[Tuple[int, int, int]]] = []
     de_seg_dur: List[float] = []
@@ -1611,21 +1614,24 @@ def main() -> None:
             st = (poly.get("style") or "").strip()
             poly.set("style", _style_set(st, "fill-opacity", f"{de_alpha:.3f}"))
 
-    # heart: fit + per-poly microvariation (shape stays new; vibe back to "older feel")
+    # heart
     heart_fit: Optional[Dict[str, float]] = None
     heart_hj: List[float] = []
     heart_sj: List[float] = []
     heart_tw_f: List[float] = []
     heart_tw_p: List[float] = []
+    heart_fire_h: List[float] = []
     if cfg.kind == "heart":
         heart_fit = _compute_heart_fit(margin=0.02)
+        fire_hues = [350/360.0, 0/360.0, 10/360.0, 330/360.0, 315/360.0, 45/360.0]  # valentines-like
         for _ in polys:
-            heart_hj.append(rng.uniform(-0.016, 0.016))
-            heart_sj.append(rng.uniform(0.92, 1.18))
+            heart_hj.append(rng.uniform(-0.030, 0.030))
+            heart_sj.append(rng.uniform(0.92, 1.22))
             heart_tw_f.append(rng.uniform(0.22, 0.95))
             heart_tw_p.append(rng.uniform(0.0, 1.0))
+            heart_fire_h.append((rng.choice(fire_hues) + rng.uniform(-0.06, 0.06)) % 1.0)
 
-    # static: keep as-is (you said it’s fine)
+    # static
     static_seg: List[float] = []
     static_phase: List[float] = []
     static_color_prob: List[float] = []
@@ -1636,14 +1642,13 @@ def main() -> None:
             static_phase.append(rng.uniform(0.0, 10.0))
             static_color_prob.append(rng.uniform(0.06, 0.14))
 
-    # matrix: code-rain drops per column
-    col_count = 24
-    col_drop: List[MatrixDrop] = []
+    # matrix
     col_count = max(14, min(40, int(round(math.sqrt(len(polys)) * 4))))
+    col_drop: List[MatrixDrop] = []
     if cfg.kind == "matrix":
         for _c in range(col_count):
             col_drop.append(MatrixDrop(
-                speed=rng.uniform(0.10, 0.32),   # downward speed (units/sec)
+                speed=rng.uniform(0.10, 0.32),
                 phase=rng.uniform(0.0, 1.0),
                 tail=rng.uniform(0.18, 0.55),
                 head=rng.uniform(0.02, 0.06),
@@ -1652,14 +1657,12 @@ def main() -> None:
                 flicker_phase=rng.uniform(0.0, 1.0),
             ))
 
-    # champagne: bubbles
+    # champagne (unchanged)
     bubbles: List[Bubble] = []
     ch_freq: List[float] = []
     ch_phase: List[float] = []
     if cfg.kind == "champagne":
-        # bubble count scaled to complexity, capped for speed
         n_bub = min(90, max(24, int(round(math.sqrt(len(polys)) * 10))))
-        # a few "streams" to make it feel like real bubbly columns
         stream_x = [rng.uniform(0.12, 0.88) for _ in range(rng.randint(4, 7))]
         for _ in range(n_bub):
             sx = rng.choice(stream_x)
@@ -1689,7 +1692,6 @@ def main() -> None:
         for i in range(frames):
             t = i / float(fps)
 
-            # ambient breathing used by several themes
             amb = cfg.amb_base + cfg.amb_amp * (0.5 + 0.5 * math.sin(2.0 * math.pi * (cfg.amb_freq * t)))
 
             if cfg.kind == "classic":
@@ -1707,17 +1709,13 @@ def main() -> None:
                     spec = _smoothstep(cfg.spec_edge0, 1.0, glint)
                     spec = _clamp01(spec * cfg.spec_scale)
 
-                    # base grey facet (high contrast)
                     g0 = _clamp01((ph.v * ph.v_mul))
-                    # push some facets darker and some lighter, but not "all dark at once"
                     g = _clamp01((g0 - 0.5) * 1.20 + 0.5)
                     grey = int(round(g * 255.0))
                     rgb = (grey, grey, grey)
 
-                    # specular to near-white
                     rgb = _mix_rgb(rgb, (255, 255, 255), 0.18 + 0.72 * spec)
 
-                    # dispersion fire in highlights
                     if ph.fire_enabled:
                         gate = _smoothstep(cfg.fire_gate0, 1.0, glint)
                         if gate > 0.001:
@@ -1731,9 +1729,7 @@ def main() -> None:
                             mix_amt = _clamp01(gate * (0.20 + 0.55 * ph.fire_white_mix))
                             rgb = _mix_rgb(rgb, fire_rgb, mix_amt)
 
-                    # tiny ambient lift
                     rgb = mix_to_white(rgb, amb * 0.20)
-
                     poly.set("fill", _rgb_to_hex(rgb))
 
             elif cfg.kind == "hsv":
@@ -1742,12 +1738,10 @@ def main() -> None:
                     pulse = whiteness_at(t, pulses_per_poly[idx])
                     shim = facet_shimmer(t, ph.freq, ph.phase)
 
-                    # body HSV
                     drift_h = cfg.hue_shimmer_amp * math.sin(2.0 * math.pi * (0.10 * t + ph.phase))
                     h = (ph.h + drift_h) % 1.0
 
                     v = _clamp01((ph.v * ph.v_mul) + cfg.val_shimmer_amp * (shim - 0.5))
-                    # avoid going too close to black/white too often
                     v = _clamp01(0.06 + 0.90 * v)
 
                     s = ph.s * cfg.body_sat_mul * ph.sat_mul
@@ -1759,16 +1753,13 @@ def main() -> None:
                     spec = _smoothstep(cfg.spec_edge0, 1.0, glint)
                     spec = _clamp01(spec * cfg.spec_scale)
 
-                    # sheen (tinted specular)
                     sh = (h + cfg.sheen_hue_shift) % 1.0
                     ss = _clamp01(s + cfg.sheen_sat_boost)
                     sheen_rgb = _hsv01_to_rgb255(sh, ss, 1.0)
                     rgb = _mix_rgb(rgb, sheen_rgb, cfg.sheen_mix * spec)
 
-                    # modest white sparkle, but not constantly
                     rgb = _mix_rgb(rgb, (255, 255, 255), 0.06 * spec)
 
-                    # dispersion in highlights
                     if ph.fire_enabled:
                         gate = _smoothstep(cfg.fire_gate0, 1.0, glint)
                         if gate > 0.001:
@@ -1782,9 +1773,7 @@ def main() -> None:
                             mix_amt = _clamp01(gate * 0.45)
                             rgb = _mix_rgb(rgb, fire_rgb, mix_amt)
 
-                    # ambient breathing
                     rgb = mix_to_white(rgb, amb * 0.10)
-
                     poly.set("fill", _rgb_to_hex(rgb))
 
             elif cfg.kind == "minecraft":
@@ -1795,11 +1784,9 @@ def main() -> None:
                     py = int(round(v * (mc_h - 1)))
                     base = mc_pixels[py * mc_w + px]
 
-                    # gentle time variation: tiny luma modulation + occasional glints
                     shim = facet_shimmer(t, mc_freq[idx], mc_phase[idx])
                     pulse = whiteness_at(t, pulses_per_poly[idx]) if pulses_per_poly[idx] else 0.0
 
-                    # small contrast/luma wobble
                     wob = 0.92 + 0.12 * (0.5 + 0.5 * math.sin(2.0 * math.pi * (0.07 * t + mc_phase[idx])))
                     rgb = (
                         max(0, min(255, int(round(base[0] * wob)))),
@@ -1810,15 +1797,12 @@ def main() -> None:
                     glint = max(cfg.gl_shim_w * shim, cfg.gl_pulse_w * pulse)
                     spec = _smoothstep(cfg.spec_edge0, 1.0, glint) * cfg.spec_scale
 
-                    # warm-ish sun glint (subtle)
                     if spec > 0.0:
                         sun = _hsv01_to_rgb255(45/360.0, 0.18, 1.0)
                         rgb = _mix_rgb(rgb, sun, 0.12 * spec)
                         rgb = _mix_rgb(rgb, (255, 255, 255), 0.28 * spec)
 
-                    # ambient lift
                     rgb = mix_to_white(rgb, amb * 0.06)
-
                     poly.set("fill", _rgb_to_hex(rgb))
 
             elif cfg.kind == "deidee":
@@ -1854,15 +1838,12 @@ def main() -> None:
                     a1 = _hash01(static_seedf * 0.001 + idx * 12.9898 + (k0 + 1) * 78.233)
                     a = (1.0 - u) * a0 + u * a1
 
-                    # contrast curve
                     a = _clamp01((a - 0.5) * 1.85 + 0.5)
                     vv = 0.06 + 0.94 * a
 
-                    # scanline-ish modulation
                     scan = 0.95 + 0.05 * math.sin(2.0 * math.pi * (poly_ny[idx] * 90.0 + t * 1.25))
                     vv = _clamp01(vv * scan)
 
-                    # occasional color speck
                     csel0 = _hash01(static_seedf * 0.002 + idx * 3.11 + k0 * 9.73)
                     csel1 = _hash01(static_seedf * 0.002 + idx * 3.11 + (k0 + 1) * 9.73)
                     csel = (1.0 - u) * csel0 + u * csel1
@@ -1886,9 +1867,7 @@ def main() -> None:
                     c = int(_clamp01(nx) * (col_count - 1))
                     d = col_drop[c]
 
-                    # downward head position (wrap)
                     head = (d.phase + d.speed * t) % 1.0
-                    # distance from head going downward (wrap)
                     dist = (ny - head) % 1.0
 
                     if dist <= d.head:
@@ -1899,18 +1878,15 @@ def main() -> None:
                     else:
                         inten = 0.0
 
-                    # flicker
                     fl = 0.72 + 0.28 * math.sin(2.0 * math.pi * (d.flicker_freq * t + d.flicker_phase))
                     inten = _clamp01(inten * d.strength * fl)
 
-                    # background: very dark green-black with subtle variation
                     bg_v = 0.02 + 0.04 * (0.5 + 0.5 * math.sin(2.0 * math.pi * (0.18 * t + nx * 1.7 + ny * 0.9)))
                     bg = _hsv01_to_rgb255(120/360.0, 0.55, bg_v)
 
                     if inten <= 0.0:
                         rgb = bg
                     else:
-                        # head is whiter, tail greener
                         headness = _smoothstep(0.75, 1.0, inten)
                         g_v = 0.10 + 0.90 * inten
                         green = _hsv01_to_rgb255(120/360.0, 1.0, g_v)
@@ -1920,32 +1896,26 @@ def main() -> None:
                     poly.set("fill", _rgb_to_hex(rgb))
 
             elif cfg.kind == "champagne":
-                # warm liquid + bubbles rising upward
                 for idx, poly in enumerate(polys):
                     nx = poly_nx[idx]
                     ny = poly_ny[idx]
 
-                    # base liquid (slightly lighter at top)
                     h = (45/360.0) + 0.010 * math.sin(2.0 * math.pi * (0.04 * t + ch_phase[idx]))
                     s = 0.18 + 0.12 * (0.5 + 0.5 * math.sin(2.0 * math.pi * (ch_freq[idx] * t + ch_phase[idx])))
-                    v = 0.30 + 0.55 * (1.0 - ny)  # brighter near top
-                    # add gentle moving shimmer
+                    v = 0.30 + 0.55 * (1.0 - ny)
                     v += 0.06 * (facet_shimmer(t, 0.12 + ch_freq[idx], ch_phase[idx]) - 0.5)
                     v = _clamp01(v)
 
                     rgb = _hsv01_to_rgb255(h, s, v)
 
-                    # bubbles: add bright near-white circles that move upward
                     bub = 0.0
                     bub_edge = 0.0
                     for b in bubbles:
-                        # bubble y rises upward (ny decreases)
                         by = (b.y0 - b.speed * t) % 1.0
                         bx = _clamp01(b.x + b.wob_amp * math.sin(2.0 * math.pi * (b.wob_freq * t + b.wob_phase)))
                         infl = _bubble_influence(nx, ny, bx, by, b.r)
                         if infl > 1e-6:
                             bub = max(bub, infl * b.strength)
-                            # edge highlight: a slightly tighter radius
                             infl2 = _bubble_influence(nx, ny, bx, by, b.r * 0.60)
                             bub_edge = max(bub_edge, infl2 * b.strength)
 
@@ -1953,89 +1923,88 @@ def main() -> None:
                     bub_edge = _clamp01(bub_edge)
 
                     if bub > 0.0:
-                        # bright bubble body: white with a tiny cool tint
                         bubble_rgb = _hsv01_to_rgb255(200/360.0, 0.08, 1.0)
                         rgb = _mix_rgb(rgb, bubble_rgb, 0.70 * bub)
-                        # stronger sparkle on bubble core/edge
                         rgb = _mix_rgb(rgb, (255, 255, 255), 0.55 * bub_edge)
 
-                        # tiny dispersion tint on the brightest highlights
                         tint_gate = _smoothstep(0.30, 0.90, bub_edge)
                         if tint_gate > 0.0:
                             fh = (0.10 + 0.20 * math.sin(2.0 * math.pi * (0.06 * t + nx))) % 1.0
                             tint = _hsv01_to_rgb255(fh, 0.55, 1.0)
                             rgb = _mix_rgb(rgb, tint, 0.10 * tint_gate)
 
-                    # ambient lift
                     rgb = mix_to_white(rgb, amb * 0.08)
-
                     poly.set("fill", _rgb_to_hex(rgb))
 
             elif cfg.kind == "heart":
-                pulse = _beat_wave_old_feel(t)
+                pulse = _beat_wave_smooth(t)
                 assert heart_fit is not None
 
-                # "older" lively feel: darker bg (but not crushed), vivid heart, strong glints
-                if override_hsv is not None:
-                    heart_h_base = override_hsv[0]
-                else:
-                    heart_h_base = 350 / 360.0
+                # Valentines-like palette bias (pinks/reds) + a little golden sparkle.
+                base_h = (override_hsv[0] if override_hsv is not None else (335 / 360.0))
 
                 for idx, poly in enumerate(polys):
                     nx = poly_nx[idx]
                     ny = poly_ny[idx]
 
-                    mask, glow = _heart_mask_icon(nx, ny, pulse, heart_fit)
+                    # AA mask for smoother growth/edges on mosaic polygons
+                    mask, glow = _heart_mask_icon_aa(nx, ny, pulse, heart_fit)
 
-                    # Background: dark charcoal with subtle purple tint (contrasty like before)
-                    bg_h = 260/360.0
-                    bg_s = 0.22
+                    # Background: deep plum/charcoal with a soft vignette (so heart pops)
+                    bg_h = (300/360.0) + 0.010 * math.sin(2.0 * math.pi * (0.03 * t + nx * 0.7))
+                    bg_s = 0.35
                     vign = math.sqrt((nx - 0.5) ** 2 + (ny - 0.5) ** 2)
-                    bg_v = 0.06 + 0.06 * (1.0 - _smoothstep(0.18, 0.95, vign))
-                    bg_v += 0.02 * math.sin(2.0 * math.pi * (0.05 * t + nx * 0.9 + ny * 0.4))
+                    bg_v = 0.05 + 0.07 * (1.0 - _smoothstep(0.15, 0.95, vign))
+                    bg_v += 0.02 * math.sin(2.0 * math.pi * (0.05 * t + nx * 1.1 + ny * 0.6))
                     bg_v = _clamp01(bg_v)
                     bg_rgb = _hsv01_to_rgb255(bg_h, bg_s, bg_v)
 
-                    # Heart base: vivid pink->magenta with slight spatial hue sweep
-                    h = (heart_h_base
-                         + 0.045 * (nx - 0.5)
-                         + 0.020 * math.sin(2.0 * math.pi * (0.08 * t + ny * 0.75))
+                    # Heart base hue: valentines-ish sweep with jitter
+                    h = (base_h
+                         + 0.090 * (nx - 0.5)
+                         + 0.040 * math.sin(2.0 * math.pi * (0.09 * t + ny * 0.9))
                          + heart_hj[idx]) % 1.0
 
-                    # Saturation: lively, not always max; modulated by pulse and glow
-                    s = (0.70 + 0.25 * mask + 0.18 * glow) * heart_sj[idx]
-                    s *= (0.85 + 0.30 * (0.5 + 0.5 * math.sin(2.0 * math.pi * (0.11 * t + heart_tw_p[idx]))))
+                    # Saturation: generally high like valentines, but with random breathing so it doesn't feel flat
+                    sat_breathe = 0.85 + 0.30 * (0.5 + 0.5 * math.sin(2.0 * math.pi * (0.12 * t + heart_tw_p[idx])))
+                    s = (0.72 + 0.30 * mask + 0.22 * glow) * heart_sj[idx] * sat_breathe
                     s = _clamp01(s)
 
-                    # Value: keep heart "whitespace" lighter than bg, with pulsing lift
-                    v = 0.18 + 0.40 * mask
-                    v += 0.35 * mask * (0.22 + 0.78 * pulse)
-                    v += 0.22 * glow * (0.35 + 0.65 * pulse)
+                    # Value: brighter "whitespace" inside heart, especially during the beat; keep edges very bright
+                    v = 0.18 + 0.46 * mask
+                    v += 0.34 * mask * (0.18 + 0.82 * pulse)
+                    v += 0.22 * glow * (0.30 + 0.70 * pulse)
                     v = _clamp01(v)
 
                     heart_rgb = _hsv01_to_rgb255(h, s, v)
-
-                    # Blend heart into bg
                     rgb = _mix_rgb(bg_rgb, heart_rgb, mask)
 
-                    # Edge glow (white-ish, with a bit of tinted energy like before)
-                    edge = _clamp01(glow * (0.20 + 0.35 * pulse))
-                    rgb = _mix_rgb(rgb, (255, 255, 255), 0.42 * edge)
-                    rgb = _mix_rgb(rgb, heart_rgb, 0.25 * edge)
+                    # Edge + internal sheen: pink-white + occasional warm sparkle (valentines vibe)
+                    edge = _clamp01(glow * (0.22 + 0.40 * pulse))
+                    rgb = _mix_rgb(rgb, (255, 255, 255), 0.40 * edge)
 
-                    # Sparkly twinkles inside heart (brighter + more frequent than the last slow version)
+                    # Add a tinted "fire" sparkle hue on strong edge glow (like valentines dispersion)
+                    fire_gate = _smoothstep(0.35, 0.92, edge)
+                    if fire_gate > 0.0:
+                        fh = (heart_fire_h[idx] + 0.02 * math.sin(2.0 * math.pi * (0.06 * t + nx))) % 1.0
+                        fire_rgb = _hsv01_to_rgb255(fh, _clamp01(0.65 + 0.35 * s), 1.0)
+                        rgb = _mix_rgb(rgb, fire_rgb, 0.18 * fire_gate)
+
+                    # Twinkles (more valentine-like: whiter heads + colored flare)
                     tw = facet_shimmer(t, heart_tw_f[idx], heart_tw_p[idx])
-                    tw = (mask ** 1.55) * (tw ** 1.25)
-                    sparkle = _clamp01(tw * (0.07 + 0.24 * pulse) + (mask ** 2.0) * (0.02 + 0.06 * pulse))
-                    rgb = _mix_rgb(rgb, (255, 255, 255), sparkle)
+                    tw = (mask ** 1.55) * (tw ** 1.30)
+                    sparkle = _clamp01(tw * (0.06 + 0.22 * pulse) + (mask ** 2.2) * (0.02 + 0.06 * pulse))
+                    if sparkle > 0.0:
+                        rgb = _mix_rgb(rgb, (255, 255, 255), sparkle)
+                        # subtle colored rim on sparkles
+                        fh2 = (heart_fire_h[idx] + 0.015 * math.sin(2.0 * math.pi * (0.08 * t + ny))) % 1.0
+                        flare = _hsv01_to_rgb255(fh2, 0.85, 1.0)
+                        rgb = _mix_rgb(rgb, flare, 0.10 * sparkle)
 
-                    # subtle ambient breathing
                     rgb = mix_to_white(rgb, amb * 0.10)
-
                     poly.set("fill", _rgb_to_hex(rgb))
 
             else:
-                # Should not happen (all kinds handled)
                 for idx, poly in enumerate(polys):
                     a = whiteness_at(t, pulses_per_poly[idx])
                     poly.set("fill", _rgb_to_hex(mix_to_white(base_rgbs[idx], a)))
