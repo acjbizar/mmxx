@@ -4,12 +4,18 @@
 tools/generate-video.py
 
 Generate a video from either:
-  - --char  -> src/character-u{codepoint}.svg  (fallback: src/character-{char}.svg)
-  - --chars -> combines N character SVGs into a single SVG grid (NxN) where N depends on len(chars):
+  - --char  -> src/{character|inverse}-u{codepoint}.svg
+  - --chars -> combines N character SVGs into a single SVG grid (NxN) where N depends on count(chars):
         4  -> 2x2
         9  -> 3x3
         16 -> 4x4
     Order is left-to-right, top-to-bottom.
+
+Input forms:
+- --char a              (single character)
+- --char u0061 / U+0061 / 0061  (codepoint formats)
+- --chars abcd          (characters; spaces ignored)
+- --chars "u0061 u0062 u0063 u0064" (codepoint tokens; whitespace-separated)
 
 Grid layout (for --chars):
 - --gap 0 (default): no extra spacing/padding
@@ -21,19 +27,21 @@ Also in --chars mode:
 Themes:
 - classic (default): pulse-to-white using polygon base colors (or --color)
 - diamond: high-contrast greys + strong specular + dispersion "fire" in highlights
-- silver / gold / bronze: metallic hue drift + colored sheen + glints
-- ruby / jade / sapphire / emerald: gem saturation + absorption-like depth + glints
-- rainbow: per-facet hue + iridescent drift + colorful highlights
-- fire / ice: stylized warm/cool materials (colorful glints; less white-mix than classic)
-- minecraft: samples the real Grass Block (carried side texture) pixels (16×16) per polygon centroid,
-            animated via facet lighting + neighbour "pixel sparkle"
-- deidee: cycles polygon colors ONLY between samples of:
-            fill(random(0, .5), random(.5, 1), random(0, .75), .5)
-          i.e. RGB in that distribution, alpha=0.5. No shading, no whitening, no extra colors.
+- silver / gold / bronze
+- ruby / jade / sapphire / emerald
+- rainbow
+- fire / ice
+- valentines / matrix
+- holographic (iridescent, prismatic drift)
+- sunset (warm gradient drift)
+- laser-grid (neon palette + moving gridline sparkle)
+- snow (high-contrast cold greys + frosty sparkle)
+- minecraft (grass block texture sampling)
+- deidee (alpha=0.5, only interpolates between random samples from given distribution)
 
 Output:
-  dist/videos/character-{char}.{ext}
-  dist/videos/logo-{chars}.{ext}
+  dist/videos/{character|inverse}-u{codepoint}.{ext}
+  dist/videos/logo-{...}.{ext} (safe filename)
 
 If output filename already exists:
   - appends a timestamp: ...-YYYYMMDD-HHMMSS.ext
@@ -76,42 +84,17 @@ SVG_NS = "http://www.w3.org/2000/svg"
 XLINK_NS = "http://www.w3.org/1999/xlink"
 NUM_RE = re.compile(r"[-+]?(?:\d+\.?\d*|\.\d+)(?:[eE][-+]?\d+)?")
 
-
 DEFAULT_MINECRAFT_TEXTURE_URL = (
     "https://static.wikia.nocookie.net/minecraft_gamepedia/images/b/b2/"
     "Grass_Block_%28carried_side_texture%29_BE1.png/revision/latest?cb=20200928054656"
 )
 
-
-# -------------------- Helpers: filename resolution ---------------------------
-
-def _cp_slug_for_char(ch: str) -> str:
-    """Return filename slug like u0061 or u1f642 (lowercase hex, padded to >=4)."""
-    cp = ord(ch)
-    return "u" + format(cp, "x").rjust(4, "0")
-
-
-def resolve_character_svg(src_dir: Path, ch: str) -> Optional[Path]:
-    """
-    Prefer new naming:
-      character-u{codepoint}.svg
-    Fallback to legacy naming:
-      character-{char}.svg
-    Also tries lower/upper variants for convenience.
-    """
-    slug = _cp_slug_for_char(ch)
-    candidates = [
-        src_dir / f"character-{slug}.svg",
-        src_dir / f"character-{slug.upper()}.svg",
-        # legacy
-        src_dir / f"character-{ch}.svg",
-        src_dir / f"character-{ch.lower()}.svg",
-        src_dir / f"character-{ch.upper()}.svg",
-    ]
-    for p in candidates:
-        if p.is_file():
-            return p
-    return None
+_CODEPOINT_RE = re.compile(r"^(?:u\+?|U\+?)([0-9a-fA-F]{4,8})$")
+_HEX_RE = re.compile(r"^[0-9a-fA-F]{4,8}$")
+_TRANSLATE_RE = re.compile(
+    r"translate\(\s*(" + NUM_RE.pattern + r")\s*(?:[, ]\s*(" + NUM_RE.pattern + r"))?\s*\)",
+    re.I
+)
 
 
 # -------------------- Helpers: SVG parsing / color ----------------------------
@@ -142,9 +125,6 @@ def _style_get(style: str, key: str) -> Optional[str]:
 
 
 def _style_set(style: str, key: str, value: str) -> str:
-    """
-    Set/replace a key in an inline style string (very small helper).
-    """
     key_l = key.strip().lower()
     items: List[Tuple[str, str]] = []
     if style:
@@ -315,6 +295,103 @@ def _poly_centroid_local(poly: etree._Element) -> Optional[Tuple[float, float]]:
     return (x, y)
 
 
+def _parse_translate(transform: str) -> Tuple[float, float]:
+    if not transform:
+        return (0.0, 0.0)
+    m = _TRANSLATE_RE.search(transform)
+    if not m:
+        return (0.0, 0.0)
+    tx = float(m.group(1))
+    ty = float(m.group(2)) if m.group(2) is not None else 0.0
+    return (tx, ty)
+
+
+def _accumulate_translate(el: etree._Element) -> Tuple[float, float]:
+    tx = 0.0
+    ty = 0.0
+    cur = el
+    while cur is not None and isinstance(cur.tag, str):
+        tr = (cur.get("transform") or "").strip()
+        if tr:
+            dx, dy = _parse_translate(tr)
+            tx += dx
+            ty += dy
+        cur = cur.getparent()
+    return (tx, ty)
+
+
+def _global_centroid_norm(poly: etree._Element, vb: Tuple[float, float, float, float]) -> Tuple[float, float]:
+    minx, miny, vbw, vbh = vb
+    c = _poly_centroid_local(poly)
+    if c is None:
+        return (0.5, 0.5)
+    tx, ty = _accumulate_translate(poly)
+    gx = c[0] + tx
+    gy = c[1] + ty
+    nx = (gx - minx) / vbw if vbw > 0 else 0.5
+    ny = (gy - miny) / vbh if vbh > 0 else 0.5
+    return (_clamp01(nx), _clamp01(ny))
+
+
+# -------------------- Char/codepoint parsing ---------------------------------
+
+def _parse_char_or_codepoint(s: str) -> Tuple[str, int, str]:
+    """
+    Returns (token, codepoint_int, display_string)
+    token format: u0061, u1f600, ...
+    """
+    raw = (s or "").strip()
+    if not raw:
+        raise ValueError("Empty char/codepoint")
+
+    if len(raw) == 1:
+        cp = ord(raw)
+        return (f"u{cp:04x}".lower(), cp, raw)
+
+    m = _CODEPOINT_RE.match(raw)
+    if m:
+        cp = int(m.group(1), 16)
+        disp = chr(cp) if 0 <= cp <= 0x10FFFF else raw
+        return (f"u{cp:04x}".lower(), cp, disp)
+
+    if _HEX_RE.match(raw):
+        cp = int(raw, 16)
+        disp = chr(cp) if 0 <= cp <= 0x10FFFF else raw
+        return (f"u{cp:04x}".lower(), cp, disp)
+
+    raise ValueError(f"Not a single character or codepoint token: {raw!r}")
+
+
+def _parse_chars_arg(chars: str) -> List[Tuple[str, int, str]]:
+    """
+    If it's whitespace-separated codepoint tokens (all look like uXXXX/U+XXXX/XXXX), parse tokens.
+    Otherwise, treat as literal characters (spaces ignored).
+    """
+    s = (chars or "").strip()
+    if not s:
+        return []
+
+    toks = [t for t in re.split(r"\s+", s) if t]
+    if len(toks) > 1 and all((_CODEPOINT_RE.match(t) or _HEX_RE.match(t)) for t in toks):
+        return [_parse_char_or_codepoint(t) for t in toks]
+
+    compact = "".join(c for c in s if not c.isspace())
+    return [_parse_char_or_codepoint(c) for c in compact]
+
+
+def _safe_logo_key(items: List[Tuple[str, int, str]]) -> str:
+    """
+    Safe filename key. Keeps ASCII alnum chars; otherwise uses token.
+    """
+    out: List[str] = []
+    for token, _cp, disp in items:
+        if len(disp) == 1 and ord(disp) < 128 and disp.isalnum():
+            out.append(disp.lower())
+        else:
+            out.append(token.lower())
+    return "".join(out)
+
+
 # -------------------- Minecraft texture sampling ------------------------------
 
 def _load_minecraft_texture_16x16(source: str) -> Tuple[List[Tuple[int, int, int]], int, int]:
@@ -348,10 +425,6 @@ def _load_minecraft_texture_16x16(source: str) -> Tuple[List[Tuple[int, int, int
 
 
 def _glyph_viewbox_for_element(el: etree._Element, fallback: Tuple[float, float, float, float]) -> Tuple[float, float, float, float]:
-    """
-    In --chars mode, each glyph is wrapped in a <g> with data-minx/miny/vbw/vbh.
-    Use that so minecraft sampling is per-glyph (16x16 per character), not per whole logo canvas.
-    """
     cur = el
     while cur is not None and isinstance(cur.tag, str):
         vbw = cur.get("data-vbw")
@@ -452,9 +525,6 @@ def _strip_white_full_canvas_rects(svg_root: etree._Element, vb: Tuple[float, fl
 
 
 def build_logo_svg_from_chars_grid(char_svgs: List[Path], grid_n: int, gap_flag: int) -> etree._Element:
-    """
-    grid_n: 2, 3, 4  (expects len(char_svgs) == grid_n*grid_n)
-    """
     if grid_n not in (2, 3, 4):
         raise ValueError("grid_n must be 2, 3, or 4.")
     if len(char_svgs) != grid_n * grid_n:
@@ -591,6 +661,11 @@ class ThemeConfig:
     kind: str  # "classic", "diamond", "hsv_body", "minecraft", "deidee"
     base_hue: Optional[float] = None
     hue_jitter: float = 0.0
+
+    # Optional palette bias for selecting body hues when base_hue is None
+    palette_hues: Optional[List[float]] = None
+    palette_bias_prob: float = 0.0
+    palette_hue_jitter: float = 0.0
 
     body_sat_min: float = 0.0
     body_sat_max: float = 0.0
@@ -901,8 +976,7 @@ def get_theme_config(theme: str) -> ThemeConfig:
             fire_hue_jitter=0.10,
             fire_sat_base_min=0.28, fire_sat_base_max=0.62,
             fire_sat_peak_min=0.80, fire_sat_peak_max=1.00,
-            fire_white_mix_min=0.10,
-            fire_white_mix_max=0.38,
+            fire_white_mix_min=0.10, fire_white_mix_max=0.38,
         ))
 
     if theme == "matrix":
@@ -923,6 +997,95 @@ def get_theme_config(theme: str) -> ThemeConfig:
             fire_sat_base_min=0.35, fire_sat_base_max=0.75,
             fire_sat_peak_min=0.90, fire_sat_peak_max=1.00,
             fire_white_mix_min=0.02, fire_white_mix_max=0.14,
+        ))
+
+    # ---- NEW THEMES ----
+
+    if theme == "holographic":
+        # Iridescent / prismatic: big hue motion + rainbow glints, low white-mix
+        return _cfg_merge(common, dict(
+            base_hue=None,
+            body_sat_min=0.78, body_sat_max=1.00,
+            body_v_min=0.16, body_v_max=0.96, body_v_gamma=0.95,
+            body_sat_mul=1.12,
+            sat_dark_boost=0.12,
+            hue_tone_amp=0.010,
+            hue_shimmer_amp=0.085,
+            val_shimmer_amp=0.060,
+            spec_edge0=0.46, spec_scale=0.96,
+            sheen_mix=0.08, sheen_sat_boost=0.48, sheen_hue_shift=0.012,
+            fire_prob=0.88,
+            fire_hues=_FIRE_HUES_DEFAULT,
+            fire_hue_jitter=0.16,
+            fire_sat_base_min=0.30, fire_sat_base_max=0.70,
+            fire_sat_peak_min=0.90, fire_sat_peak_max=1.00,
+            fire_white_mix_min=0.02, fire_white_mix_max=0.22,
+        ))
+
+    if theme == "sunset":
+        # Warm orange->pink->purple drift; brighter toward "horizon"
+        return _cfg_merge(common, dict(
+            base_hue=20/360.0, hue_jitter=0.22,
+            body_sat_min=0.68, body_sat_max=1.00,
+            body_v_min=0.18, body_v_max=0.98, body_v_gamma=0.95,
+            body_sat_mul=1.10,
+            sat_dark_boost=0.10,
+            hue_tone_amp=0.020,
+            hue_shimmer_amp=0.030,
+            val_shimmer_amp=0.050,
+            spec_edge0=0.50, spec_scale=0.92,
+            sheen_mix=0.12, sheen_sat_boost=0.34, sheen_hue_shift=0.010,
+            fire_prob=0.70,
+            fire_hues=[5/360.0, 20/360.0, 35/360.0, 50/360.0, 320/360.0, 295/360.0, 270/360.0],
+            fire_hue_jitter=0.10,
+            fire_sat_base_min=0.26, fire_sat_base_max=0.60,
+            fire_sat_peak_min=0.80, fire_sat_peak_max=1.00,
+            fire_white_mix_min=0.05, fire_white_mix_max=0.28,
+        ))
+
+    if theme == "laser-grid":
+        # Neon palette + sharper spec + extra gridline sparkle (added in render step)
+        return _cfg_merge(common, dict(
+            base_hue=None,
+            palette_hues=[185/360.0, 205/360.0, 295/360.0, 315/360.0, 120/360.0, 60/360.0],
+            palette_bias_prob=0.92,
+            palette_hue_jitter=0.03,
+            body_sat_min=0.85, body_sat_max=1.00,
+            body_v_min=0.05, body_v_max=0.80, body_v_gamma=1.35,
+            body_sat_mul=1.15,
+            sat_dark_boost=0.08,
+            hue_tone_amp=0.006,
+            hue_shimmer_amp=0.030,
+            val_shimmer_amp=0.040,
+            spec_edge0=0.42, spec_scale=0.98,
+            sheen_mix=0.05, sheen_sat_boost=0.45, sheen_hue_shift=0.004,
+            fire_prob=0.90,
+            fire_hues=[185/360.0, 205/360.0, 120/360.0, 295/360.0, 315/360.0, 60/360.0, 0/360.0],
+            fire_hue_jitter=0.08,
+            fire_sat_base_min=0.34, fire_sat_base_max=0.70,
+            fire_sat_peak_min=0.90, fire_sat_peak_max=1.00,
+            fire_white_mix_min=0.02, fire_white_mix_max=0.12,
+        ))
+
+    if theme == "snow":
+        # Cold, high-contrast greys with frosty sparkle (mostly white-ish glints)
+        return _cfg_merge(common, dict(
+            base_hue=205/360.0, hue_jitter=0.05,
+            body_sat_min=0.04, body_sat_max=0.30,
+            body_v_min=0.10, body_v_max=1.00, body_v_gamma=0.90,
+            body_sat_mul=1.00,
+            sat_dark_boost=0.05,
+            hue_tone_amp=0.004,
+            hue_shimmer_amp=0.010,
+            val_shimmer_amp=0.055,
+            spec_edge0=0.52, spec_scale=0.96,
+            sheen_mix=0.30, sheen_sat_boost=0.06, sheen_hue_shift=-0.004,
+            fire_prob=0.55,
+            fire_hues=[190/360.0, 205/360.0, 220/360.0, 235/360.0, 255/360.0],
+            fire_hue_jitter=0.08,
+            fire_sat_base_min=0.10, fire_sat_base_max=0.30,
+            fire_sat_peak_min=0.25, fire_sat_peak_max=0.55,
+            fire_white_mix_min=0.60, fire_white_mix_max=0.88,
         ))
 
     raise ValueError(f"Unknown theme: {theme!r}")
@@ -1070,20 +1233,18 @@ def _timestamped_if_exists(path: Path) -> Path:
 # -------------------- MAIN ----------------------------------------------------
 
 def main() -> None:
-    ap = argparse.ArgumentParser(description="Generate a polygon-pulse video from a character SVG or a square-grid logo.")
+    ap = argparse.ArgumentParser(description="Generate a polygon animation video from a character SVG or a square-grid logo.")
     g = ap.add_mutually_exclusive_group(required=True)
-    g.add_argument(
-        "--char",
-        type=str,
-        default=None,
-        help="Single character: uses src/character-u{codepoint}.svg (fallback: src/character-{char}.svg)",
-    )
+    g.add_argument("--char", type=str, default=None, help="Single character OR codepoint token (uXXXX / U+XXXX / XXXX).")
     g.add_argument(
         "--chars",
         type=str,
         default=None,
-        help="A square number of chars (ignoring spaces): 4->2x2, 9->3x3, 16->4x4. Combines character SVGs into a grid.",
+        help="Square count of chars: 4->2x2, 9->3x3, 16->4x4. Either literal characters (spaces ignored) or whitespace-separated codepoint tokens.",
     )
+
+    ap.add_argument("--inverse", action="store_true",
+                    help="Use src/inverse-u{codepoint}.svg instead of src/character-u{codepoint}.svg")
 
     ap.add_argument("--gap", type=int, default=0, choices=[0, 1],
                     help="Logo spacing (only for --chars): 0 = no gaps (default), 1 = pad+gap = 1/8 of cell size.")
@@ -1102,6 +1263,7 @@ def main() -> None:
             "rainbow",
             "fire", "ice",
             "valentines", "matrix",
+            "holographic", "sunset", "laser-grid", "snow",
             "minecraft",
             "deidee",
         ],
@@ -1131,54 +1293,50 @@ def main() -> None:
     src_dir = root / "src"
     out_dir = root / "dist" / "videos"
 
+    glyph_prefix = "inverse" if args.inverse else "character"
+
     parser = etree.XMLParser(remove_blank_text=False, recover=True, remove_comments=False)
 
     if args.char is not None:
-        ch = args.char
-        if len(ch) != 1:
-            raise SystemExit("--char must be exactly one character.")
-
-        in_svg_path = resolve_character_svg(src_dir, ch)
-        if in_svg_path is None:
-            slug = _cp_slug_for_char(ch)
-            raise SystemExit(
-                f"Input SVG not found for {ch!r}. Tried:\n"
-                f"  - {src_dir / f'character-{slug}.svg'}\n"
-                f"  - {src_dir / f'character-{ch}.svg'} (legacy)\n"
-            )
+        token, cp, disp = _parse_char_or_codepoint(args.char)
+        in_svg_path = src_dir / f"{glyph_prefix}-{token}.svg"
+        if not in_svg_path.is_file():
+            raise SystemExit(f"Input SVG not found: {in_svg_path}")
 
         doc = etree.fromstring(in_svg_path.read_bytes(), parser=parser)
-        out_file = out_dir / f"character-{ch}.{args.ext.lower()}"
-        label = f"character {ch!r}"
+
+        out_stem = f"{glyph_prefix}-{token}"
+        out_file = out_dir / f"{out_stem}.{args.ext.lower()}"
+        label = f"{glyph_prefix} {disp!r} ({token})"
     else:
-        key = "".join(c for c in args.chars.strip() if not c.isspace()).lower()
-        n = len(key)
+        items = _parse_chars_arg(args.chars or "")
+        if not items:
+            raise SystemExit("--chars is empty after parsing.")
+
+        n = len(items)
         grid_n = int(round(math.sqrt(n)))
         if grid_n * grid_n != n or grid_n not in (2, 3, 4):
-            raise SystemExit("--chars must be 4, 9, or 16 characters long (ignoring spaces), for 2x2 / 3x3 / 4x4 grids.")
+            raise SystemExit("--chars must contain 4, 9, or 16 items (characters or codepoints) for 2x2 / 3x3 / 4x4 grids.")
 
         char_paths: List[Path] = []
-        for c in key:
-            p = resolve_character_svg(src_dir, c)
-            if p is None:
-                slug = _cp_slug_for_char(c)
-                raise SystemExit(
-                    f"Input SVG not found for {c!r} in --chars.\n"
-                    f"Expected one of:\n"
-                    f"  - {src_dir / f'character-{slug}.svg'}\n"
-                    f"  - {src_dir / f'character-{c}.svg'} (legacy)\n"
-                )
-            char_paths.append(p)
+        for token, _cp, _disp in items:
+            char_paths.append(src_dir / f"{glyph_prefix}-{token}.svg")
 
         doc = build_logo_svg_from_chars_grid(char_paths, grid_n=grid_n, gap_flag=args.gap)
-        out_file = out_dir / f"logo-{key}.{args.ext.lower()}"
-        label = f"logo {key!r} ({grid_n}x{grid_n}, gap={args.gap})"
+
+        safe_key = _safe_logo_key(items)
+        out_stem = f"logo-{'inv-' if args.inverse else ''}{safe_key}"
+        out_file = out_dir / f"{out_stem}.{args.ext.lower()}"
+
+        shown = "".join(d for _t, _cp, d in items)
+        label = f"logo {shown!r} ({grid_n}x{grid_n}, gap={args.gap}, {glyph_prefix})"
 
     out_file = _timestamped_if_exists(out_file)
 
     minx, miny, vb_w, vb_h = _parse_viewbox(doc)
     if vb_w <= 0 or vb_h <= 0:
         vb_w, vb_h = 240.0, 240.0
+    vb_tuple = (minx, miny, vb_w, vb_h)
 
     # Background override
     bgcolor = args.bgcolor.strip() or None
@@ -1212,6 +1370,14 @@ def main() -> None:
         raise SystemExit("No <polygon> elements found in the input SVG(s).")
 
     rng = random.Random(args.seed)
+
+    # Per-poly normalized centroid (used by laser-grid / holo / sunset / snow tweaks)
+    poly_nx: List[float] = []
+    poly_ny: List[float] = []
+    for p in polys:
+        nx, ny = _global_centroid_norm(p, vb_tuple)
+        poly_nx.append(nx)
+        poly_ny.append(ny)
 
     # Base colors for classic mode
     override_color = args.color.strip() or None
@@ -1323,9 +1489,15 @@ def main() -> None:
                     poly_body_sat.append(s)
                 else:
                     if cfg.base_hue is None:
-                        h = rng.random()
+                        if cfg.palette_hues and rng.random() < cfg.palette_bias_prob:
+                            h = rng.choice(cfg.palette_hues)
+                            if cfg.palette_hue_jitter:
+                                h = (h + rng.uniform(-cfg.palette_hue_jitter, cfg.palette_hue_jitter)) % 1.0
+                        else:
+                            h = rng.random()
                     else:
                         h = (cfg.base_hue + rng.uniform(-cfg.hue_jitter, cfg.hue_jitter)) % 1.0
+
                     s = rng.uniform(cfg.body_sat_min, cfg.body_sat_max)
                     poly_body_hue.append(h)
                     poly_body_sat.append(s)
@@ -1352,11 +1524,11 @@ def main() -> None:
             poly_fire_sat_mul.append(mul)
             poly_fire_white_mix.append(rng.uniform(cfg.fire_white_mix_min, cfg.fire_white_mix_max))
 
-            # minecraft neighbor sampling
+            # minecraft sampling
             if cfg.kind == "minecraft":
                 c = _poly_centroid_local(poly) or (0.5 * 240.0, 0.5 * 240.0)
                 gx, gy = c
-                gminx, gminy, gvw, gvh = _glyph_viewbox_for_element(poly, (minx, miny, vb_w, vb_h))
+                gminx, gminy, gvw, gvh = _glyph_viewbox_for_element(poly, vb_tuple)
                 nx = (gx - gminx) / gvw if gvw > 0 else 0.5
                 ny = (gy - gminy) / gvh if gvh > 0 else 0.5
                 nx = _clamp01(nx)
@@ -1452,6 +1624,32 @@ def main() -> None:
                     spec = _smoothstep(cfg.spec_edge0, 1.00, gl)
                     spec_amt = spec * cfg.spec_scale
 
+                    # Extra theme shaping that benefits from position:
+                    nx = poly_nx[idx]
+                    ny = poly_ny[idx]
+
+                    if args.theme == "laser-grid":
+                        # Moving grid lines (thin bright stripes) in normalized coords.
+                        freq = 9.0  # grid density
+                        speed_x = 0.14
+                        speed_y = 0.11
+                        lx = abs(math.sin(2.0 * math.pi * (nx * freq + t * speed_x)))
+                        ly = abs(math.sin(2.0 * math.pi * (ny * freq - t * speed_y)))
+                        line_x = _smoothstep(0.92, 0.995, 1.0 - lx)
+                        line_y = _smoothstep(0.92, 0.995, 1.0 - ly)
+                        grid = max(line_x, line_y)
+                        # Use grid to push glints / spec without turning everything white.
+                        gl = _clamp01(gl + 0.55 * grid)
+                        spec = _smoothstep(cfg.spec_edge0, 1.00, gl)
+                        spec_amt = _clamp01(spec * cfg.spec_scale + 0.20 * grid)
+
+                    if args.theme == "snow":
+                        # Slow drifting sparkle bands (like soft snowfall glimmer)
+                        drift = 0.5 + 0.5 * math.sin(2.0 * math.pi * (t * 0.08 + nx * 2.2 + ny * 5.1))
+                        frost = _smoothstep(0.80, 1.00, drift) * _smoothstep(0.35, 1.00, gl)
+                        spec_amt = _clamp01(spec_amt + 0.22 * frost)
+                        gl = _clamp01(gl + 0.25 * frost)
+
                     if cfg.kind == "minecraft":
                         base = mc_base_rgb[idx]
                         hi = mc_hi_rgb[idx]
@@ -1469,7 +1667,6 @@ def main() -> None:
 
                         shadow_amt = 0.20 + 0.35 * _smoothstep(0.00, 0.55, 1.0 - tone)
                         body = _mix_rgb(body, _scale_rgb(lo, shade * 0.92), shadow_amt * 0.35)
-
                         body = _mix_rgb(body, _scale_rgb(hi, shade * 1.02), global_amb)
 
                         sparkle = _smoothstep(0.35, 1.00, gl)
@@ -1516,6 +1713,27 @@ def main() -> None:
                     s0 = poly_body_sat[idx] * cfg.body_sat_mul
                     s = s0 * (1.0 + cfg.sat_dark_boost * (1.0 - tone))
                     s = _clamp01(s)
+
+                    # Theme-specific hue/value shaping (still respects the theme palette feel)
+                    if args.theme == "holographic":
+                        h = (h + 0.28 * (nx - 0.5) + 0.18 * (ny - 0.5) +
+                             0.06 * math.sin(2.0 * math.pi * (0.08 * t + nx * 0.7 + ny * 0.4))) % 1.0
+                        s = _clamp01(s * (1.0 + 0.22 * (shim - 0.5)))
+                        v = _clamp01(v + 0.06 * (shim - 0.5))
+
+                    if args.theme == "sunset":
+                        h = (h + 0.10 * (1.0 - ny) + 0.02 * math.sin(2.0 * math.pi * (0.05 * t + nx))) % 1.0
+                        v = _clamp01(v + 0.07 * (1.0 - ny))
+
+                    if args.theme == "laser-grid":
+                        # Keep bodies darker but let gridlines pop.
+                        # (spec_amt/gl already boosted above)
+                        s = _clamp01(s * (1.0 + 0.18 * _smoothstep(0.55, 1.0, spec_amt)))
+                        v = _clamp01(v + 0.10 * _smoothstep(0.55, 1.0, spec_amt))
+
+                    if args.theme == "snow":
+                        # De-saturate sparkles further; keep cold tint
+                        s = _clamp01(s * (0.95 - 0.25 * _smoothstep(0.55, 1.0, spec_amt)))
 
                     body3 = _hsv01_to_rgb255(h, s, v)
                     body3 = mix_to_white(body3, global_amb)
