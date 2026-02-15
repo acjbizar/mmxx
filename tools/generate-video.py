@@ -4,18 +4,28 @@
 tools/generate-video.py
 
 Generate a video from either:
-  - --char  -> src/{character|inverse}-u{codepoint}.svg
-  - --chars -> combines N character SVGs into a single SVG grid (NxN) where N depends on count(chars):
+  - --char  -> single glyph SVG
+  - --chars -> combines N glyph SVGs into a single SVG grid (NxN), where N depends on count(chars):
         4  -> 2x2
         9  -> 3x3
         16 -> 4x4
     Order is left-to-right, top-to-bottom.
 
-Input forms:
-- --char a              (single character)
-- --char u0061 / U+0061 / 0061  (codepoint formats)
-- --chars abcd          (characters; spaces ignored)
-- --chars "u0061 u0062 u0063 u0064" (codepoint tokens; whitespace-separated)
+Input resolution (backwards-compatible):
+- For a glyph token T:
+    1) try: src/{prefix}-{T}.svg   (e.g. character-a.svg)
+    2) else: src/{prefix}-u{XXXX}.svg (e.g. character-u0061.svg)
+
+  prefix = "character" or "inverse" (if --inverse is set)
+
+Accepted --char formats:
+- --char a
+- --char u0061 / U+0061 / 0061
+
+Accepted --chars formats:
+- --chars abcd              (spaces ignored)
+- --chars "u0061 u0062 u0063 u0064" (whitespace-separated codepoint tokens)
+- must be 4 / 9 / 16 items after parsing
 
 Grid layout (for --chars):
 - --gap 0 (default): no extra spacing/padding
@@ -33,18 +43,26 @@ Themes:
 - fire / ice
 - valentines
 - matrix: "code rain" columns (falling bright heads + trailing tails)
-- snow: high-contrast cold greys + frosty sparkle
-- minecraft (grass block texture sampling)
-- deidee (alpha=0.5, only interpolates between random samples from given distribution)
-- ecat: slower pulsating animated graphical heart (icon-like silhouette, auto-fit to frame)
+- snow
+- minecraft: samples from Minecraft grass block texture (animated glints, texture remains recognizable)
+- deidee: interpolates between random RGBA samples from:
+    fill(random(0, .5), random(.5, 1), random(0, .75), .5)
+- heart: pulsating graphical heart (new silhouette) with the *older* lively colors/animation feel
 - static: TV-like noise/static (mostly greys with rare color specks)
+- champagne: sparkly-wine bubbles rising upward (warm liquid + bright bubble trails)
 
 Output:
-  dist/videos/{character|inverse}-u{codepoint}.{ext}
-  dist/videos/logo-{...}.{ext} (safe filename)
+  dist/videos/{prefix}-{token}.{ext} (for --char)
+  dist/videos/logo-{...}.{ext}       (for --chars)
 
 If output filename already exists:
   - appends a timestamp: ...-YYYYMMDD-HHMMSS.ext
+
+Dependencies (recommended):
+  - cairosvg  (fast SVG->PNG):  py -m pip install cairosvg
+  - ffmpeg    (on PATH)
+
+Fallback renderers (slower): inkscape, rsvg-convert
 """
 
 from __future__ import annotations
@@ -83,12 +101,6 @@ except Exception:
 SVG_NS = "http://www.w3.org/2000/svg"
 XLINK_NS = "http://www.w3.org/1999/xlink"
 NUM_RE = re.compile(r"[-+]?(?:\d+\.?\d*|\.\d+)(?:[eE][-+]?\d+)?")
-
-DEFAULT_MINECRAFT_TEXTURE_URL = (
-    "https://static.wikia.nocookie.net/minecraft_gamepedia/images/b/b2/"
-    "Grass_Block_%28carried_side_texture%29_BE1.png/revision/latest?cb=20200928054656"
-)
-
 _CODEPOINT_RE = re.compile(r"^(?:u\+?|U\+?)([0-9a-fA-F]{4,8})$")
 _HEX_RE = re.compile(r"^[0-9a-fA-F]{4,8}$")
 _TRANSLATE_RE = re.compile(
@@ -97,12 +109,79 @@ _TRANSLATE_RE = re.compile(
 )
 _URL_ID_RE = re.compile(r"url\(#([^)]+)\)")
 
+DEFAULT_MINECRAFT_TEXTURE_URL = (
+    "https://static.wikia.nocookie.net/minecraft_gamepedia/images/b/b2/"
+    "Grass_Block_%28carried_side_texture%29_BE1.png/revision/latest?cb=20200928054656"
+)
 
-# -------------------- Helpers: SVG parsing / color ----------------------------
+
+# -------------------- Small utils --------------------------------------------
+
+def _clamp01(x: float) -> float:
+    if x <= 0.0:
+        return 0.0
+    if x >= 1.0:
+        return 1.0
+    return x
+
 
 def _local_name(tag: str) -> str:
     return tag.rsplit("}", 1)[-1] if "}" in tag else tag
 
+
+def _smoothstep(edge0: float, edge1: float, x: float) -> float:
+    if edge0 == edge1:
+        return 0.0
+    t = _clamp01((x - edge0) / (edge1 - edge0))
+    return t * t * (3.0 - 2.0 * t)
+
+
+def _cosine_ease(x: float) -> float:
+    x = _clamp01(x)
+    return 0.5 - 0.5 * math.cos(math.pi * x)
+
+
+def _mix_rgb(a: Tuple[int, int, int], b: Tuple[int, int, int], t: float) -> Tuple[int, int, int]:
+    t = _clamp01(t)
+    ar, ag, ab = a
+    br, bg, bb = b
+    r = int(round((1.0 - t) * ar + t * br))
+    g = int(round((1.0 - t) * ag + t * bg))
+    b2 = int(round((1.0 - t) * ab + t * bb))
+    return (max(0, min(255, r)), max(0, min(255, g)), max(0, min(255, b2)))
+
+
+def _rgb255_to_hsv01(rgb: Tuple[int, int, int]) -> Tuple[float, float, float]:
+    r, g, b = rgb
+    return colorsys.rgb_to_hsv(r / 255.0, g / 255.0, b / 255.0)
+
+
+def _hsv01_to_rgb255(h: float, s: float, v: float) -> Tuple[int, int, int]:
+    r, g, b = colorsys.hsv_to_rgb(h % 1.0, _clamp01(s), _clamp01(v))
+    return (int(round(r * 255.0)), int(round(g * 255.0)), int(round(b * 255.0)))
+
+
+def _rgb_to_hex(rgb: Tuple[int, int, int]) -> str:
+    r, g, b = rgb
+    return f"#{r:02x}{g:02x}{b:02x}"
+
+
+def mix_to_white(base: Tuple[int, int, int], a: float) -> Tuple[int, int, int]:
+    r0, g0, b0 = base
+    r = int(round((1.0 - a) * r0 + a * 255.0))
+    g = int(round((1.0 - a) * g0 + a * 255.0))
+    b = int(round((1.0 - a) * b0 + a * 255.0))
+    return (max(0, min(255, r)), max(0, min(255, g)), max(0, min(255, b)))
+
+
+def _timestamped_if_exists(path: Path) -> Path:
+    if not path.exists():
+        return path
+    ts = datetime.now().strftime("%Y%m%d-%H%M%S")
+    return path.with_name(f"{path.stem}-{ts}{path.suffix}")
+
+
+# -------------------- SVG helpers --------------------------------------------
 
 def _parse_viewbox(root: etree._Element) -> Tuple[float, float, float, float]:
     vb = root.get("viewBox") or root.get("viewbox") or "0 0 240 240"
@@ -120,7 +199,7 @@ def _style_get(style: str, key: str) -> Optional[str]:
         if ":" not in p:
             continue
         k, v = p.split(":", 1)
-        if k.strip().lower() == key.lower():
+        if k.strip().lower() == key.strip().lower():
             return v.strip()
     return None
 
@@ -196,80 +275,11 @@ def _parse_css_color_to_rgb(color: str) -> Tuple[int, int, int]:
     raise ValueError(f"Unsupported/unknown color: {color!r}")
 
 
-def _rgb_to_hex(rgb: Tuple[int, int, int]) -> str:
-    r, g, b = rgb
-    return f"#{r:02x}{g:02x}{b:02x}"
-
-
-def _clamp01(x: float) -> float:
-    if x <= 0.0:
-        return 0.0
-    if x >= 1.0:
-        return 1.0
-    return x
-
-
-def _mix_rgb(a: Tuple[int, int, int], b: Tuple[int, int, int], t: float) -> Tuple[int, int, int]:
-    t = _clamp01(t)
-    ar, ag, ab = a
-    br, bg, bb = b
-    r = int(round((1.0 - t) * ar + t * br))
-    g = int(round((1.0 - t) * ag + t * bg))
-    b2 = int(round((1.0 - t) * ab + t * bb))
-    return (max(0, min(255, r)), max(0, min(255, g)), max(0, min(255, b2)))
-
-
-def _smoothstep(edge0: float, edge1: float, x: float) -> float:
-    if edge0 == edge1:
-        return 0.0
-    t = _clamp01((x - edge0) / (edge1 - edge0))
-    return t * t * (3.0 - 2.0 * t)
-
-
-def _cosine_ease(x: float) -> float:
-    x = _clamp01(x)
-    return 0.5 - 0.5 * math.cos(math.pi * x)
-
-
-def _rgb255_to_hsv01(rgb: Tuple[int, int, int]) -> Tuple[float, float, float]:
-    r, g, b = rgb
-    return colorsys.rgb_to_hsv(r / 255.0, g / 255.0, b / 255.0)
-
-
-def _hsv01_to_rgb255(h: float, s: float, v: float) -> Tuple[int, int, int]:
-    r, g, b = colorsys.hsv_to_rgb(h % 1.0, _clamp01(s), _clamp01(v))
-    return (int(round(r * 255.0)), int(round(g * 255.0)), int(round(b * 255.0)))
-
-
-def mix_to_white(base: Tuple[int, int, int], a: float) -> Tuple[int, int, int]:
-    r0, g0, b0 = base
-    r = int(round((1.0 - a) * r0 + a * 255.0))
-    g = int(round((1.0 - a) * g0 + a * 255.0))
-    b = int(round((1.0 - a) * b0 + a * 255.0))
-    return (max(0, min(255, r)), max(0, min(255, g)), max(0, min(255, b)))
-
-
-def _scale_rgb(rgb: Tuple[int, int, int], f: float) -> Tuple[int, int, int]:
-    r, g, b = rgb
-    return (
-        max(0, min(255, int(round(r * f)))),
-        max(0, min(255, int(round(g * f)))),
-        max(0, min(255, int(round(b * f)))),
-    )
-
-
-def _luma(rgb: Tuple[int, int, int]) -> float:
-    r, g, b = rgb
-    return 0.2126 * r + 0.7152 * g + 0.0722 * b
-
-
 def _is_whiteish_color_str(s: str) -> bool:
     if not s:
         return False
     c = s.strip().lower()
     if c in {"#fff", "#ffffff", "white"}:
-        return True
-    if c.startswith("rgb(") and "255" in c:
         return True
     try:
         r, g, b = _parse_css_color_to_rgb(s)
@@ -334,6 +344,112 @@ def _global_centroid_norm(poly: etree._Element, vb: Tuple[float, float, float, f
     return (_clamp01(nx), _clamp01(ny))
 
 
+def _glyph_viewbox_for_element(el: etree._Element, fallback: Tuple[float, float, float, float]) -> Tuple[float, float, float, float]:
+    cur = el
+    while cur is not None and isinstance(cur.tag, str):
+        vbw = cur.get("data-vbw")
+        vbh = cur.get("data-vbh")
+        if vbw and vbh:
+            try:
+                minx = float(cur.get("data-minx", "0") or "0")
+                miny = float(cur.get("data-miny", "0") or "0")
+                vw = float(vbw)
+                vh = float(vbh)
+                return (minx, miny, vw, vh)
+            except Exception:
+                break
+        cur = cur.getparent()
+    return fallback
+
+
+def _centroid_in_glyph_norm(poly: etree._Element, root_vb: Tuple[float, float, float, float]) -> Tuple[float, float]:
+    # Use polygon local centroid, mapped into the nearest glyph viewBox (no group translate).
+    vb = _glyph_viewbox_for_element(poly, root_vb)
+    minx, miny, vbw, vbh = vb
+    c = _poly_centroid_local(poly)
+    if c is None:
+        return (0.5, 0.5)
+    nx = (c[0] - minx) / vbw if vbw > 0 else 0.5
+    ny = (c[1] - miny) / vbh if vbh > 0 else 0.5
+    return (_clamp01(nx), _clamp01(ny))
+
+
+def _strip_white_full_canvas_rects(svg_root: etree._Element, vb: Tuple[float, float, float, float]) -> None:
+    minx, miny, vbw, vbh = vb
+    tol = 1e-6
+    rects = svg_root.xpath('.//*[local-name()="rect"]')
+    for r in rects:
+        if not isinstance(r.tag, str):
+            continue
+        if r.get("transform"):
+            continue
+        try:
+            x = float(r.get("x", "0") or "0")
+            y = float(r.get("y", "0") or "0")
+            w = float(r.get("width", "0") or "0")
+            h = float(r.get("height", "0") or "0")
+        except Exception:
+            continue
+
+        covers = (
+            abs(x - minx) < tol and
+            abs(y - miny) < tol and
+            abs(w - vbw) < tol and
+            abs(h - vbh) < tol
+        )
+        if not covers:
+            continue
+
+        fill = _resolve_fill(r) or ""
+        if _is_whiteish_color_str(fill):
+            parent = r.getparent()
+            if parent is not None:
+                parent.remove(r)
+
+
+def _prefix_svg_ids(svg_fragment: etree._Element, prefix: str) -> None:
+    id_map: Dict[str, str] = {}
+    for el in svg_fragment.iter():
+        if not isinstance(el.tag, str):
+            continue
+        old = el.get("id")
+        if old:
+            new = f"{prefix}{old}"
+            id_map[old] = new
+            el.set("id", new)
+
+    if not id_map:
+        return
+
+    def rewrite_value(v: str) -> str:
+        if not v:
+            return v
+
+        def repl(m: re.Match) -> str:
+            old_id = m.group(1)
+            new_id = id_map.get(old_id, old_id)
+            return f"url(#{new_id})"
+
+        out = _URL_ID_RE.sub(repl, v)
+
+        if out.startswith("#") and out[1:] in id_map:
+            out = "#" + id_map[out[1:]]
+
+        for old_id, new_id in id_map.items():
+            out = out.replace(f"#{old_id}", f"#{new_id}")
+
+        return out
+
+    for el in svg_fragment.iter():
+        if not isinstance(el.tag, str):
+            continue
+        for attr, val in list(el.attrib.items()):
+            if isinstance(val, str):
+                newv = rewrite_value(val)
+                if newv != val:
+                    el.set(attr, newv)
+
+
 # -------------------- Char/codepoint parsing ---------------------------------
 
 def _parse_char_or_codepoint(s: str) -> Tuple[str, int, str]:
@@ -382,134 +498,18 @@ def _safe_logo_key(items: List[Tuple[str, int, str]]) -> str:
     return "".join(out)
 
 
-# -------------------- Minecraft texture sampling ------------------------------
-
-def _load_minecraft_texture_16x16(source: str) -> Tuple[List[Tuple[int, int, int]], int, int]:
-    if Image is None:
-        raise RuntimeError("Minecraft theme requires Pillow. Install with: py -m pip install pillow")
-
-    src = (source or "").strip() or DEFAULT_MINECRAFT_TEXTURE_URL
-
-    if Path(src).is_file():
-        data = Path(src).read_bytes()
-    else:
-        req = Request(src, headers={"User-Agent": "Mozilla/5.0"})
-        with urlopen(req, timeout=20) as resp:
-            data = resp.read()
-
-    img = Image.open(io.BytesIO(data)).convert("RGBA")
-
-    if hasattr(Image, "Resampling"):
-        resample = Image.Resampling.NEAREST
-    else:
-        resample = Image.NEAREST
-    img = img.resize((16, 16), resample=resample)
-
-    w, h = img.size
-    pixels: List[Tuple[int, int, int]] = []
-    for y in range(h):
-        for x in range(w):
-            r, g, b, _a = img.getpixel((x, y))
-            pixels.append((int(r), int(g), int(b)))
-    return pixels, w, h
+def _resolve_glyph_svg_path(src_dir: Path, prefix: str, token: str, disp: str) -> Path:
+    # 1) character-a.svg style (if possible)
+    if len(disp) == 1:
+        p1 = src_dir / f"{prefix}-{disp}.svg"
+        if p1.is_file():
+            return p1
+    # 2) character-u0061.svg style
+    p2 = src_dir / f"{prefix}-{token}.svg"
+    return p2
 
 
-def _glyph_viewbox_for_element(el: etree._Element, fallback: Tuple[float, float, float, float]) -> Tuple[float, float, float, float]:
-    cur = el
-    while cur is not None and isinstance(cur.tag, str):
-        vbw = cur.get("data-vbw")
-        vbh = cur.get("data-vbh")
-        if vbw and vbh:
-            try:
-                minx = float(cur.get("data-minx", "0") or "0")
-                miny = float(cur.get("data-miny", "0") or "0")
-                vw = float(vbw)
-                vh = float(vbh)
-                return (minx, miny, vw, vh)
-            except Exception:
-                break
-        cur = cur.getparent()
-    return fallback
-
-
-# -------------------- Logo building (combine character SVGs into grid) --------
-
-def _prefix_svg_ids(svg_fragment: etree._Element, prefix: str) -> None:
-    id_map: Dict[str, str] = {}
-    for el in svg_fragment.iter():
-        if not isinstance(el.tag, str):
-            continue
-        old = el.get("id")
-        if old:
-            new = f"{prefix}{old}"
-            id_map[old] = new
-            el.set("id", new)
-
-    if not id_map:
-        return
-
-    def rewrite_value(v: str) -> str:
-        if not v:
-            return v
-
-        def repl(m: re.Match) -> str:
-            old_id = m.group(1)
-            new_id = id_map.get(old_id, old_id)
-            return f"url(#{new_id})"
-
-        out = _URL_ID_RE.sub(repl, v)
-
-        if out.startswith("#") and out[1:] in id_map:
-            out = "#" + id_map[out[1:]]
-
-        for old_id, new_id in id_map.items():
-            out = out.replace(f"#{old_id}", f"#{new_id}")
-
-        return out
-
-    for el in svg_fragment.iter():
-        if not isinstance(el.tag, str):
-            continue
-        for attr, val in list(el.attrib.items()):
-            if not isinstance(val, str):
-                continue
-            newv = rewrite_value(val)
-            if newv != val:
-                el.set(attr, newv)
-
-
-def _strip_white_full_canvas_rects(svg_root: etree._Element, vb: Tuple[float, float, float, float]) -> None:
-    minx, miny, vbw, vbh = vb
-    tol = 1e-6
-    rects = svg_root.xpath('.//*[local-name()="rect"]')
-    for r in rects:
-        if not isinstance(r.tag, str):
-            continue
-        if r.get("transform"):
-            continue
-        try:
-            x = float(r.get("x", "0") or "0")
-            y = float(r.get("y", "0") or "0")
-            w = float(r.get("width", "0") or "0")
-            h = float(r.get("height", "0") or "0")
-        except Exception:
-            continue
-
-        covers = (
-            abs(x - minx) < tol and
-            abs(y - miny) < tol and
-            abs(w - vbw) < tol and
-            abs(h - vbh) < tol
-        )
-        if not covers:
-            continue
-
-        fill = _resolve_fill(r) or ""
-        if _is_whiteish_color_str(fill):
-            parent = r.getparent()
-            if parent is not None:
-                parent.remove(r)
-
+# -------------------- Logo building (combine glyph SVGs into grid) ------------
 
 def build_logo_svg_from_chars_grid(char_svgs: List[Path], grid_n: int, gap_flag: int) -> etree._Element:
     if grid_n not in (2, 3, 4):
@@ -572,452 +572,6 @@ def build_logo_svg_from_chars_grid(char_svgs: List[Path], grid_n: int, gap_flag:
         svg.append(group)
 
     return svg
-
-
-# -------------------- Animation model ----------------------------------------
-
-class Pulse:
-    __slots__ = ("t0", "half", "amp", "power")
-
-    def __init__(self, t0: float, half: float, amp: float, power: float = 1.0):
-        self.t0 = t0
-        self.half = half
-        self.amp = amp
-        self.power = power
-
-    def value(self, t: float) -> float:
-        dt = abs(t - self.t0)
-        if dt >= self.half:
-            return 0.0
-        x = dt / self.half
-        base = 0.5 * (1.0 + math.cos(math.pi * x))
-        if self.power != 1.0:
-            base = base ** self.power
-        return self.amp * base
-
-
-def facet_shimmer(t: float, freq: float, phase: float) -> float:
-    s1 = 0.5 + 0.5 * math.sin(2.0 * math.pi * (freq * t + phase))
-    s2 = 0.5 + 0.5 * math.sin(2.0 * math.pi * ((freq * 0.47) * t + (phase * 1.63)))
-    s = s1 * s2
-    return _clamp01(s ** 2.0)
-
-
-def make_pulses(rng: random.Random, duration: float, theme: str) -> List[Pulse]:
-    if theme in {"deidee", "matrix", "ecat", "static"}:
-        return []
-
-    if theme != "classic":
-        pulses: List[Pulse] = []
-        n_glints = rng.randint(2, 4) if theme == "minecraft" else rng.randint(1, 3)
-        for _ in range(n_glints):
-            t0 = rng.uniform(0.0, duration)
-            half = rng.uniform(1.40, 3.80) if theme == "minecraft" else rng.uniform(2.10, 5.80)
-            amp = rng.uniform(0.70, 1.00)
-            power = rng.uniform(1.0, 1.30)
-            pulses.append(Pulse(t0, half, amp, power=power))
-
-        if rng.random() < 0.60:
-            t0 = rng.uniform(0.0, duration)
-            half = rng.uniform(3.50, 7.50)
-            amp = rng.uniform(0.06, 0.14)
-            pulses.append(Pulse(t0, half, amp, power=1.0))
-
-        return pulses
-
-    n = rng.randint(3, 7)
-    pulses: List[Pulse] = []
-    for _ in range(n):
-        t0 = rng.uniform(0.0, duration)
-        half = rng.uniform(0.25, 1.10)
-        amp = rng.uniform(0.55, 1.00)
-        pulses.append(Pulse(t0, half, amp, power=1.0))
-    return pulses
-
-
-def whiteness_at(t: float, pulses: List[Pulse]) -> float:
-    a = 0.0
-    for p in pulses:
-        a = max(a, p.value(t))
-    return _clamp01(a)
-
-
-# -------------------- Themes --------------------------------------------------
-
-@dataclass(frozen=True)
-class ThemeConfig:
-    kind: str  # "classic", "diamond", "hsv_body", "minecraft", "deidee", "ecat", "static"
-    base_hue: Optional[float] = None
-    hue_jitter: float = 0.0
-
-    body_sat_min: float = 0.0
-    body_sat_max: float = 0.0
-    body_v_min: float = 0.0
-    body_v_max: float = 1.0
-    body_v_gamma: float = 1.0
-
-    body_sat_mul: float = 1.0
-    sat_dark_boost: float = 0.0
-    hue_tone_amp: float = 0.0
-    hue_shimmer_amp: float = 0.0
-    val_shimmer_amp: float = 0.0
-
-    grey_dark: Tuple[int, int, int] = (6, 6, 8)
-    grey_light: Tuple[int, int, int] = (255, 255, 255)
-
-    amb_base: float = 0.05
-    amb_amp: float = 0.03
-    amb_freq: float = 0.025
-
-    gl_pulse_w: float = 0.86
-    gl_shim_w: float = 0.55
-
-    spec_edge0: float = 0.48
-    spec_scale: float = 0.98
-
-    sheen_mix: float = 0.20
-    sheen_sat_boost: float = 0.15
-    sheen_hue_shift: float = 0.0
-
-    fire_prob: float = 0.0
-    fire_hues: Optional[List[float]] = None
-    fire_hue_jitter: float = 0.0
-    fire_hue_drift_amp: float = 0.015
-    fire_hue_drift_freq: float = 0.06
-
-    fire_gate0: float = 0.58
-    fire_sat_base_min: float = 0.12
-    fire_sat_base_max: float = 0.28
-    fire_sat_peak_min: float = 0.40
-    fire_sat_peak_max: float = 0.78
-
-    fire_sat_mul_lo: float = 0.85
-    fire_sat_mul_hi: float = 1.25
-
-    fire_white_mix_min: float = 0.48
-    fire_white_mix_max: float = 0.72
-
-
-@dataclass(frozen=True)
-class MatrixDrop:
-    speed: float
-    phase: float
-    tail: float
-    head: float
-    strength: float
-    flicker_freq: float
-    flicker_phase: float
-
-
-_FIRE_HUES_DEFAULT: List[float] = [
-    200 / 360.0, 220 / 360.0, 255 / 360.0, 300 / 360.0,
-    330 / 360.0, 45 / 360.0, 70 / 360.0, 150 / 360.0,
-]
-
-
-def _cfg_merge(common: Dict, specific: Dict) -> ThemeConfig:
-    merged = dict(common)
-    merged.update(specific)
-    return ThemeConfig(**merged)
-
-
-def get_theme_config(theme: str) -> ThemeConfig:
-    if theme == "classic":
-        return ThemeConfig(kind="classic")
-
-    if theme == "deidee":
-        return ThemeConfig(kind="deidee")
-
-    if theme == "ecat":
-        # white-ish background + slower heartbeat is implemented in the renderer
-        return ThemeConfig(kind="ecat", amb_base=0.015, amb_amp=0.010, amb_freq=0.020)
-
-    if theme == "static":
-        return ThemeConfig(kind="static")
-
-    if theme == "diamond":
-        return ThemeConfig(
-            kind="diamond",
-            grey_dark=(6, 6, 8),
-            grey_light=(255, 255, 255),
-            spec_edge0=0.48,
-            spec_scale=0.98,
-            fire_prob=0.36,
-            fire_hues=_FIRE_HUES_DEFAULT,
-            fire_hue_jitter=0.02,
-            fire_sat_base_min=0.12, fire_sat_base_max=0.28,
-            fire_sat_peak_min=0.45, fire_sat_peak_max=0.85,
-            fire_white_mix_min=0.48, fire_white_mix_max=0.72,
-        )
-
-    if theme == "minecraft":
-        return ThemeConfig(
-            kind="minecraft",
-            amb_base=0.02,
-            amb_amp=0.03,
-            amb_freq=0.030,
-            gl_pulse_w=0.82,
-            gl_shim_w=0.55,
-            spec_edge0=0.35,
-            spec_scale=0.70,
-            sheen_mix=0.0,
-            fire_prob=0.0,
-        )
-
-    common = dict(
-        kind="hsv_body",
-        amb_base=0.06,
-        amb_amp=0.025,
-        spec_edge0=0.54,
-        spec_scale=0.86,
-        sheen_mix=0.18,
-        sheen_sat_boost=0.22,
-        fire_white_mix_min=0.10,
-        fire_white_mix_max=0.42,
-        val_shimmer_amp=0.035,
-    )
-
-    if theme == "silver":
-        return _cfg_merge(common, dict(
-            base_hue=210/360.0, hue_jitter=0.012,
-            body_sat_min=0.22, body_sat_max=0.55,
-            body_v_min=0.22, body_v_max=0.92, body_v_gamma=1.0,
-            body_sat_mul=1.05,
-            sat_dark_boost=0.10,
-            hue_tone_amp=0.012,
-            hue_shimmer_amp=0.010,
-            sheen_mix=0.24, sheen_sat_boost=0.18, sheen_hue_shift=0.006,
-            fire_prob=0.26,
-            fire_hues=[200/360.0, 210/360.0, 225/360.0, 240/360.0],
-            fire_hue_jitter=0.04,
-            fire_sat_base_min=0.18, fire_sat_base_max=0.40,
-            fire_sat_peak_min=0.45, fire_sat_peak_max=0.85,
-        ))
-
-    if theme == "gold":
-        return _cfg_merge(common, dict(
-            base_hue=45/360.0, hue_jitter=0.024,
-            body_sat_min=0.60, body_sat_max=1.00,
-            body_v_min=0.20, body_v_max=0.92, body_v_gamma=1.0,
-            body_sat_mul=1.08,
-            sat_dark_boost=0.10,
-            hue_tone_amp=0.018,
-            hue_shimmer_amp=0.012,
-            sheen_mix=0.22, sheen_sat_boost=0.22, sheen_hue_shift=0.010,
-            fire_prob=0.38,
-            fire_hues=[35/360.0, 45/360.0, 55/360.0, 30/360.0, 65/360.0],
-            fire_hue_jitter=0.05,
-            fire_sat_base_min=0.24, fire_sat_base_max=0.52,
-            fire_sat_peak_min=0.70, fire_sat_peak_max=1.00,
-        ))
-
-    if theme == "bronze":
-        return _cfg_merge(common, dict(
-            base_hue=28/360.0, hue_jitter=0.030,
-            body_sat_min=0.55, body_sat_max=1.00,
-            body_v_min=0.18, body_v_max=0.90, body_v_gamma=1.05,
-            body_sat_mul=1.08,
-            sat_dark_boost=0.12,
-            hue_tone_amp=0.020,
-            hue_shimmer_amp=0.012,
-            sheen_mix=0.22, sheen_sat_boost=0.22, sheen_hue_shift=0.010,
-            fire_prob=0.34,
-            fire_hues=[20/360.0, 28/360.0, 35/360.0, 12/360.0, 45/360.0],
-            fire_hue_jitter=0.05,
-            fire_sat_base_min=0.22, fire_sat_base_max=0.52,
-            fire_sat_peak_min=0.65, fire_sat_peak_max=1.00,
-        ))
-
-    if theme == "ruby":
-        return _cfg_merge(common, dict(
-            base_hue=350/360.0, hue_jitter=0.022,
-            body_sat_min=0.82, body_sat_max=1.00,
-            body_v_min=0.14, body_v_max=0.90, body_v_gamma=1.08,
-            body_sat_mul=1.10,
-            sat_dark_boost=0.30,
-            hue_tone_amp=0.010,
-            hue_shimmer_amp=0.016,
-            sheen_mix=0.14, sheen_sat_boost=0.30,
-            fire_prob=0.46,
-            fire_hues=None,
-            fire_hue_jitter=0.06,
-            fire_sat_base_min=0.28, fire_sat_base_max=0.58,
-            fire_sat_peak_min=0.80, fire_sat_peak_max=1.00,
-        ))
-
-    if theme == "jade":
-        return _cfg_merge(common, dict(
-            base_hue=145/360.0, hue_jitter=0.025,
-            body_sat_min=0.70, body_sat_max=1.00,
-            body_v_min=0.16, body_v_max=0.92, body_v_gamma=1.0,
-            body_sat_mul=1.08,
-            sat_dark_boost=0.25,
-            hue_tone_amp=0.010,
-            hue_shimmer_amp=0.016,
-            sheen_mix=0.14, sheen_sat_boost=0.28,
-            fire_prob=0.42,
-            fire_hues=[130/360.0, 145/360.0, 160/360.0, 120/360.0, 175/360.0],
-            fire_hue_jitter=0.06,
-            fire_sat_base_min=0.26, fire_sat_base_max=0.54,
-            fire_sat_peak_min=0.75, fire_sat_peak_max=1.00,
-        ))
-
-    if theme == "sapphire":
-        return _cfg_merge(common, dict(
-            base_hue=220/360.0, hue_jitter=0.025,
-            body_sat_min=0.78, body_sat_max=1.00,
-            body_v_min=0.14, body_v_max=0.90, body_v_gamma=1.08,
-            body_sat_mul=1.10,
-            sat_dark_boost=0.28,
-            hue_tone_amp=0.010,
-            hue_shimmer_amp=0.018,
-            sheen_mix=0.14, sheen_sat_boost=0.30,
-            fire_prob=0.44,
-            fire_hues=[205/360.0, 220/360.0, 240/360.0, 255/360.0, 190/360.0],
-            fire_hue_jitter=0.06,
-            fire_sat_base_min=0.26, fire_sat_base_max=0.54,
-            fire_sat_peak_min=0.80, fire_sat_peak_max=1.00,
-        ))
-
-    if theme == "emerald":
-        return _cfg_merge(common, dict(
-            base_hue=140/360.0, hue_jitter=0.025,
-            body_sat_min=0.80, body_sat_max=1.00,
-            body_v_min=0.14, body_v_max=0.90, body_v_gamma=1.08,
-            body_sat_mul=1.10,
-            sat_dark_boost=0.28,
-            hue_tone_amp=0.010,
-            hue_shimmer_amp=0.018,
-            sheen_mix=0.14, sheen_sat_boost=0.30,
-            fire_prob=0.44,
-            fire_hues=[125/360.0, 140/360.0, 155/360.0, 165/360.0, 110/360.0],
-            fire_hue_jitter=0.06,
-            fire_sat_base_min=0.26, fire_sat_base_max=0.54,
-            fire_sat_peak_min=0.80, fire_sat_peak_max=1.00,
-        ))
-
-    if theme == "rainbow":
-        return _cfg_merge(common, dict(
-            base_hue=None, hue_jitter=0.0,
-            body_sat_min=0.82, body_sat_max=1.00,
-            body_v_min=0.18, body_v_max=0.92, body_v_gamma=1.0,
-            body_sat_mul=1.08,
-            sat_dark_boost=0.18,
-            hue_tone_amp=0.0,
-            hue_shimmer_amp=0.030,
-            val_shimmer_amp=0.040,
-            spec_edge0=0.50, spec_scale=0.90,
-            sheen_mix=0.12, sheen_sat_boost=0.32,
-            fire_prob=0.80,
-            fire_hues=_FIRE_HUES_DEFAULT,
-            fire_hue_jitter=0.10,
-            fire_sat_base_min=0.34, fire_sat_base_max=0.70,
-            fire_sat_peak_min=0.90, fire_sat_peak_max=1.00,
-            fire_white_mix_min=0.06,
-            fire_white_mix_max=0.30,
-        ))
-
-    if theme == "fire":
-        return _cfg_merge(common, dict(
-            base_hue=25/360.0, hue_jitter=0.070,
-            body_sat_min=0.85, body_sat_max=1.00,
-            body_v_min=0.12, body_v_max=0.90, body_v_gamma=1.08,
-            body_sat_mul=1.10,
-            sat_dark_boost=0.38,
-            hue_tone_amp=0.012,
-            hue_shimmer_amp=0.020,
-            val_shimmer_amp=0.030,
-            spec_edge0=0.46, spec_scale=0.92,
-            sheen_mix=0.10, sheen_sat_boost=0.36, sheen_hue_shift=0.018,
-            fire_prob=0.92,
-            fire_hues=[0/360.0, 12/360.0, 25/360.0, 40/360.0, 55/360.0, 65/360.0, 330/360.0],
-            fire_hue_jitter=0.11,
-            fire_sat_base_min=0.40, fire_sat_base_max=0.80,
-            fire_sat_peak_min=0.90, fire_sat_peak_max=1.00,
-            fire_white_mix_min=0.05, fire_white_mix_max=0.22,
-        ))
-
-    if theme == "ice":
-        return _cfg_merge(common, dict(
-            base_hue=205/360.0, hue_jitter=0.055,
-            body_sat_min=0.75, body_sat_max=1.00,
-            body_v_min=0.18, body_v_max=0.96, body_v_gamma=0.95,
-            body_sat_mul=1.08,
-            sat_dark_boost=0.16,
-            hue_tone_amp=0.010,
-            hue_shimmer_amp=0.020,
-            val_shimmer_amp=0.040,
-            spec_edge0=0.52, spec_scale=0.92,
-            sheen_mix=0.22, sheen_sat_boost=0.30, sheen_hue_shift=-0.010,
-            fire_prob=0.62,
-            fire_hues=[175/360.0, 195/360.0, 210/360.0, 225/360.0, 245/360.0, 275/360.0],
-            fire_hue_jitter=0.10,
-            fire_sat_base_min=0.25, fire_sat_base_max=0.55,
-            fire_sat_peak_min=0.75, fire_sat_peak_max=1.00,
-            fire_white_mix_min=0.12, fire_white_mix_max=0.35,
-        ))
-
-    if theme == "valentines":
-        return _cfg_merge(common, dict(
-            base_hue=335/360.0, hue_jitter=0.090,
-            body_sat_min=0.78, body_sat_max=1.00,
-            body_v_min=0.22, body_v_max=0.98, body_v_gamma=0.95,
-            body_sat_mul=1.10,
-            sat_dark_boost=0.18,
-            hue_tone_amp=0.012,
-            hue_shimmer_amp=0.028,
-            val_shimmer_amp=0.045,
-            spec_edge0=0.50, spec_scale=0.92,
-            sheen_mix=0.16, sheen_sat_boost=0.34, sheen_hue_shift=0.010,
-            fire_prob=0.78,
-            fire_hues=[350/360.0, 0/360.0, 10/360.0, 330/360.0, 315/360.0, 45/360.0],
-            fire_hue_jitter=0.10,
-            fire_sat_base_min=0.28, fire_sat_base_max=0.62,
-            fire_sat_peak_min=0.80, fire_sat_peak_max=1.00,
-            fire_white_mix_min=0.10, fire_white_mix_max=0.38,
-        ))
-
-    if theme == "matrix":
-        return _cfg_merge(common, dict(
-            base_hue=120/360.0, hue_jitter=0.040,
-            body_sat_min=0.85, body_sat_max=1.00,
-            body_v_min=0.03, body_v_max=0.88, body_v_gamma=1.25,
-            body_sat_mul=1.12,
-            sat_dark_boost=0.22,
-            hue_tone_amp=0.006,
-            hue_shimmer_amp=0.018,
-            val_shimmer_amp=0.030,
-            spec_edge0=0.44, spec_scale=0.94,
-            sheen_mix=0.06, sheen_sat_boost=0.40, sheen_hue_shift=-0.010,
-            fire_prob=0.20,
-            fire_hues=[110/360.0, 120/360.0, 130/360.0],
-            fire_hue_jitter=0.03,
-            fire_sat_base_min=0.20, fire_sat_base_max=0.45,
-            fire_sat_peak_min=0.55, fire_sat_peak_max=0.85,
-            fire_white_mix_min=0.00, fire_white_mix_max=0.10,
-        ))
-
-    if theme == "snow":
-        return _cfg_merge(common, dict(
-            base_hue=205/360.0, hue_jitter=0.05,
-            body_sat_min=0.04, body_sat_max=0.30,
-            body_v_min=0.10, body_v_max=1.00, body_v_gamma=0.90,
-            body_sat_mul=1.00,
-            sat_dark_boost=0.05,
-            hue_tone_amp=0.004,
-            hue_shimmer_amp=0.010,
-            val_shimmer_amp=0.055,
-            spec_edge0=0.52, spec_scale=0.96,
-            sheen_mix=0.30, sheen_sat_boost=0.06, sheen_hue_shift=-0.004,
-            fire_prob=0.55,
-            fire_hues=[190/360.0, 205/360.0, 220/360.0, 235/360.0, 255/360.0],
-            fire_hue_jitter=0.08,
-            fire_sat_base_min=0.10, fire_sat_base_max=0.30,
-            fire_sat_peak_min=0.25, fire_sat_peak_max=0.55,
-            fire_white_mix_min=0.60, fire_white_mix_max=0.88,
-        ))
-
-    raise ValueError(f"Unknown theme: {theme!r}")
 
 
 # -------------------- Rendering (SVG -> PNG) ---------------------------------
@@ -1152,32 +706,506 @@ def encode_video_ffmpeg(frames_dir: Path, fps: int, out_file: Path, ext: str) ->
     subprocess.run(cmd, check=True)
 
 
-def _timestamped_if_exists(path: Path) -> Path:
-    if not path.exists():
-        return path
-    ts = datetime.now().strftime("%Y%m%d-%H%M%S")
-    return path.with_name(f"{path.stem}-{ts}{path.suffix}")
+# -------------------- Animation primitives -----------------------------------
+
+class Pulse:
+    __slots__ = ("t0", "half", "amp", "power")
+
+    def __init__(self, t0: float, half: float, amp: float, power: float = 1.0):
+        self.t0 = t0
+        self.half = half
+        self.amp = amp
+        self.power = power
+
+    def value(self, t: float) -> float:
+        dt = abs(t - self.t0)
+        if dt >= self.half:
+            return 0.0
+        x = dt / self.half
+        base = 0.5 * (1.0 + math.cos(math.pi * x))
+        if self.power != 1.0:
+            base = base ** self.power
+        return self.amp * base
 
 
-# -------------------- Static/noise helpers -----------------------------------
+def whiteness_at(t: float, pulses: List[Pulse]) -> float:
+    a = 0.0
+    for p in pulses:
+        a = max(a, p.value(t))
+    return _clamp01(a)
+
+
+def facet_shimmer(t: float, freq: float, phase: float) -> float:
+    # "diamond-ish" shimmer: product of two sines, squared.
+    s1 = 0.5 + 0.5 * math.sin(2.0 * math.pi * (freq * t + phase))
+    s2 = 0.5 + 0.5 * math.sin(2.0 * math.pi * ((freq * 0.47) * t + (phase * 1.63)))
+    s = s1 * s2
+    return _clamp01(s ** 2.0)
+
+
+# -------------------- Themes --------------------------------------------------
+
+@dataclass(frozen=True)
+class ThemeConfig:
+    kind: str  # "classic", "diamond", "hsv", "minecraft", "deidee", "heart", "static", "champagne", "matrix"
+    base_hue: Optional[float] = None
+    hue_jitter: float = 0.0
+
+    body_sat_min: float = 0.0
+    body_sat_max: float = 0.0
+    body_v_min: float = 0.0
+    body_v_max: float = 1.0
+    body_v_gamma: float = 1.0
+
+    body_sat_mul: float = 1.0
+    sat_dark_boost: float = 0.0
+
+    hue_tone_amp: float = 0.0
+    hue_shimmer_amp: float = 0.0
+    val_shimmer_amp: float = 0.0
+
+    amb_base: float = 0.05
+    amb_amp: float = 0.03
+    amb_freq: float = 0.025
+
+    gl_pulse_w: float = 0.86
+    gl_shim_w: float = 0.55
+
+    spec_edge0: float = 0.48
+    spec_scale: float = 0.98
+
+    sheen_mix: float = 0.20
+    sheen_sat_boost: float = 0.15
+    sheen_hue_shift: float = 0.0
+
+    # dispersion "fire"
+    fire_prob: float = 0.0
+    fire_hues: Optional[List[float]] = None
+    fire_hue_jitter: float = 0.0
+    fire_hue_drift_amp: float = 0.015
+    fire_hue_drift_freq: float = 0.06
+
+    fire_gate0: float = 0.58
+    fire_sat_base_min: float = 0.12
+    fire_sat_base_max: float = 0.28
+    fire_sat_peak_min: float = 0.40
+    fire_sat_peak_max: float = 0.78
+
+    fire_sat_mul_lo: float = 0.85
+    fire_sat_mul_hi: float = 1.25
+
+    fire_white_mix_min: float = 0.48
+    fire_white_mix_max: float = 0.72
+
+
+_FIRE_HUES_DEFAULT: List[float] = [
+    200 / 360.0, 220 / 360.0, 255 / 360.0, 300 / 360.0,
+    330 / 360.0, 45 / 360.0, 70 / 360.0, 150 / 360.0,
+]
+
+
+def _cfg_merge(common: Dict, specific: Dict) -> ThemeConfig:
+    merged = dict(common)
+    merged.update(specific)
+    return ThemeConfig(**merged)
+
+
+def get_theme_config(theme: str) -> ThemeConfig:
+    if theme == "classic":
+        return ThemeConfig(kind="classic")
+
+    if theme == "diamond":
+        return ThemeConfig(
+            kind="diamond",
+            amb_base=0.045, amb_amp=0.030, amb_freq=0.022,
+            spec_edge0=0.48, spec_scale=0.98,
+            fire_prob=0.38,
+            fire_hues=_FIRE_HUES_DEFAULT,
+            fire_hue_jitter=0.02,
+            fire_sat_base_min=0.12, fire_sat_base_max=0.28,
+            fire_sat_peak_min=0.45, fire_sat_peak_max=0.85,
+            fire_white_mix_min=0.48, fire_white_mix_max=0.72,
+        )
+
+    if theme == "minecraft":
+        return ThemeConfig(
+            kind="minecraft",
+            amb_base=0.02, amb_amp=0.03, amb_freq=0.030,
+            gl_pulse_w=0.80, gl_shim_w=0.52,
+            spec_edge0=0.36, spec_scale=0.72,
+            sheen_mix=0.10, sheen_sat_boost=0.10,
+            fire_prob=0.0,
+        )
+
+    if theme == "deidee":
+        return ThemeConfig(kind="deidee")
+
+    if theme == "heart":
+        return ThemeConfig(kind="heart")
+
+    if theme == "static":
+        return ThemeConfig(kind="static")
+
+    if theme == "champagne":
+        return ThemeConfig(kind="champagne")
+
+    if theme == "matrix":
+        return ThemeConfig(kind="matrix")
+
+    common = dict(
+        kind="hsv",
+        amb_base=0.06,
+        amb_amp=0.025,
+        spec_edge0=0.54,
+        spec_scale=0.86,
+        sheen_mix=0.18,
+        sheen_sat_boost=0.22,
+        val_shimmer_amp=0.035,
+        fire_white_mix_min=0.10,
+        fire_white_mix_max=0.42,
+    )
+
+    if theme == "silver":
+        return _cfg_merge(common, dict(
+            base_hue=210/360.0, hue_jitter=0.012,
+            body_sat_min=0.22, body_sat_max=0.55,
+            body_v_min=0.22, body_v_max=0.92, body_v_gamma=1.0,
+            body_sat_mul=1.06,
+            sat_dark_boost=0.10,
+            hue_tone_amp=0.012,
+            hue_shimmer_amp=0.010,
+            sheen_mix=0.24, sheen_sat_boost=0.18, sheen_hue_shift=0.006,
+            fire_prob=0.26,
+            fire_hues=[200/360.0, 210/360.0, 225/360.0, 240/360.0],
+            fire_hue_jitter=0.04,
+            fire_sat_base_min=0.18, fire_sat_base_max=0.40,
+            fire_sat_peak_min=0.45, fire_sat_peak_max=0.85,
+        ))
+
+    if theme == "gold":
+        return _cfg_merge(common, dict(
+            base_hue=45/360.0, hue_jitter=0.024,
+            body_sat_min=0.60, body_sat_max=1.00,
+            body_v_min=0.20, body_v_max=0.92, body_v_gamma=1.0,
+            body_sat_mul=1.08,
+            sat_dark_boost=0.10,
+            hue_tone_amp=0.018,
+            hue_shimmer_amp=0.012,
+            sheen_mix=0.22, sheen_sat_boost=0.22, sheen_hue_shift=0.010,
+            fire_prob=0.38,
+            fire_hues=[35/360.0, 45/360.0, 55/360.0, 30/360.0, 65/360.0],
+            fire_hue_jitter=0.05,
+            fire_sat_base_min=0.24, fire_sat_base_max=0.52,
+            fire_sat_peak_min=0.70, fire_sat_peak_max=1.00,
+        ))
+
+    if theme == "bronze":
+        return _cfg_merge(common, dict(
+            base_hue=28/360.0, hue_jitter=0.030,
+            body_sat_min=0.55, body_sat_max=1.00,
+            body_v_min=0.18, body_v_max=0.90, body_v_gamma=1.05,
+            body_sat_mul=1.08,
+            sat_dark_boost=0.12,
+            hue_tone_amp=0.020,
+            hue_shimmer_amp=0.012,
+            sheen_mix=0.22, sheen_sat_boost=0.22, sheen_hue_shift=0.010,
+            fire_prob=0.34,
+            fire_hues=[20/360.0, 28/360.0, 35/360.0, 12/360.0, 45/360.0],
+            fire_hue_jitter=0.05,
+            fire_sat_base_min=0.22, fire_sat_base_max=0.52,
+            fire_sat_peak_min=0.65, fire_sat_peak_max=1.00,
+        ))
+
+    if theme == "ruby":
+        return _cfg_merge(common, dict(
+            base_hue=350/360.0, hue_jitter=0.022,
+            body_sat_min=0.82, body_sat_max=1.00,
+            body_v_min=0.14, body_v_max=0.90, body_v_gamma=1.08,
+            body_sat_mul=1.10,
+            sat_dark_boost=0.30,
+            hue_shimmer_amp=0.016,
+            sheen_mix=0.14, sheen_sat_boost=0.30,
+            fire_prob=0.46,
+            fire_hues=None,
+            fire_hue_jitter=0.06,
+            fire_sat_base_min=0.28, fire_sat_base_max=0.58,
+            fire_sat_peak_min=0.80, fire_sat_peak_max=1.00,
+        ))
+
+    if theme == "jade":
+        return _cfg_merge(common, dict(
+            base_hue=145/360.0, hue_jitter=0.025,
+            body_sat_min=0.70, body_sat_max=1.00,
+            body_v_min=0.16, body_v_max=0.92, body_v_gamma=1.0,
+            body_sat_mul=1.08,
+            sat_dark_boost=0.25,
+            hue_shimmer_amp=0.016,
+            sheen_mix=0.14, sheen_sat_boost=0.28,
+            fire_prob=0.42,
+            fire_hues=[130/360.0, 145/360.0, 160/360.0, 120/360.0, 175/360.0],
+            fire_hue_jitter=0.06,
+            fire_sat_base_min=0.26, fire_sat_base_max=0.54,
+            fire_sat_peak_min=0.75, fire_sat_peak_max=1.00,
+        ))
+
+    if theme == "sapphire":
+        return _cfg_merge(common, dict(
+            base_hue=220/360.0, hue_jitter=0.025,
+            body_sat_min=0.78, body_sat_max=1.00,
+            body_v_min=0.14, body_v_max=0.90, body_v_gamma=1.08,
+            body_sat_mul=1.10,
+            sat_dark_boost=0.28,
+            hue_shimmer_amp=0.018,
+            sheen_mix=0.14, sheen_sat_boost=0.30,
+            fire_prob=0.44,
+            fire_hues=[205/360.0, 220/360.0, 240/360.0, 255/360.0, 190/360.0],
+            fire_hue_jitter=0.06,
+            fire_sat_base_min=0.26, fire_sat_base_max=0.54,
+            fire_sat_peak_min=0.80, fire_sat_peak_max=1.00,
+        ))
+
+    if theme == "emerald":
+        return _cfg_merge(common, dict(
+            base_hue=140/360.0, hue_jitter=0.025,
+            body_sat_min=0.80, body_sat_max=1.00,
+            body_v_min=0.14, body_v_max=0.90, body_v_gamma=1.08,
+            body_sat_mul=1.10,
+            sat_dark_boost=0.28,
+            hue_shimmer_amp=0.018,
+            sheen_mix=0.14, sheen_sat_boost=0.30,
+            fire_prob=0.44,
+            fire_hues=[125/360.0, 140/360.0, 155/360.0, 165/360.0, 110/360.0],
+            fire_hue_jitter=0.06,
+            fire_sat_base_min=0.26, fire_sat_base_max=0.54,
+            fire_sat_peak_min=0.80, fire_sat_peak_max=1.00,
+        ))
+
+    if theme == "rainbow":
+        return _cfg_merge(common, dict(
+            base_hue=None, hue_jitter=0.0,
+            body_sat_min=0.82, body_sat_max=1.00,
+            body_v_min=0.18, body_v_max=0.92, body_v_gamma=1.0,
+            body_sat_mul=1.08,
+            sat_dark_boost=0.18,
+            hue_shimmer_amp=0.030,
+            val_shimmer_amp=0.040,
+            spec_edge0=0.50, spec_scale=0.90,
+            sheen_mix=0.12, sheen_sat_boost=0.32,
+            fire_prob=0.80,
+            fire_hues=_FIRE_HUES_DEFAULT,
+            fire_hue_jitter=0.10,
+            fire_sat_base_min=0.34, fire_sat_base_max=0.70,
+            fire_sat_peak_min=0.90, fire_sat_peak_max=1.00,
+            fire_white_mix_min=0.06,
+            fire_white_mix_max=0.30,
+        ))
+
+    if theme == "fire":
+        return _cfg_merge(common, dict(
+            base_hue=25/360.0, hue_jitter=0.070,
+            body_sat_min=0.85, body_sat_max=1.00,
+            body_v_min=0.12, body_v_max=0.90, body_v_gamma=1.08,
+            body_sat_mul=1.10,
+            sat_dark_boost=0.38,
+            hue_shimmer_amp=0.020,
+            val_shimmer_amp=0.030,
+            spec_edge0=0.46, spec_scale=0.92,
+            sheen_mix=0.10, sheen_sat_boost=0.36, sheen_hue_shift=0.018,
+            fire_prob=0.92,
+            fire_hues=[0/360.0, 12/360.0, 25/360.0, 40/360.0, 55/360.0, 65/360.0, 330/360.0],
+            fire_hue_jitter=0.11,
+            fire_sat_base_min=0.40, fire_sat_base_max=0.80,
+            fire_sat_peak_min=0.90, fire_sat_peak_max=1.00,
+            fire_white_mix_min=0.05, fire_white_mix_max=0.22,
+        ))
+
+    if theme == "ice":
+        return _cfg_merge(common, dict(
+            base_hue=205/360.0, hue_jitter=0.055,
+            body_sat_min=0.75, body_sat_max=1.00,
+            body_v_min=0.18, body_v_max=0.96, body_v_gamma=0.95,
+            body_sat_mul=1.08,
+            sat_dark_boost=0.16,
+            hue_shimmer_amp=0.020,
+            val_shimmer_amp=0.040,
+            spec_edge0=0.52, spec_scale=0.92,
+            sheen_mix=0.22, sheen_sat_boost=0.30, sheen_hue_shift=-0.010,
+            fire_prob=0.62,
+            fire_hues=[175/360.0, 195/360.0, 210/360.0, 225/360.0, 245/360.0, 275/360.0],
+            fire_hue_jitter=0.10,
+            fire_sat_base_min=0.25, fire_sat_base_max=0.55,
+            fire_sat_peak_min=0.75, fire_sat_peak_max=1.00,
+            fire_white_mix_min=0.12, fire_white_mix_max=0.35,
+        ))
+
+    if theme == "valentines":
+        return _cfg_merge(common, dict(
+            base_hue=335/360.0, hue_jitter=0.090,
+            body_sat_min=0.78, body_sat_max=1.00,
+            body_v_min=0.22, body_v_max=0.98, body_v_gamma=0.95,
+            body_sat_mul=1.10,
+            sat_dark_boost=0.18,
+            hue_shimmer_amp=0.028,
+            val_shimmer_amp=0.045,
+            spec_edge0=0.50, spec_scale=0.92,
+            sheen_mix=0.16, sheen_sat_boost=0.34, sheen_hue_shift=0.010,
+            fire_prob=0.78,
+            fire_hues=[350/360.0, 0/360.0, 10/360.0, 330/360.0, 315/360.0, 45/360.0],
+            fire_hue_jitter=0.10,
+            fire_sat_base_min=0.28, fire_sat_base_max=0.62,
+            fire_sat_peak_min=0.80, fire_sat_peak_max=1.00,
+            fire_white_mix_min=0.10, fire_white_mix_max=0.38,
+        ))
+
+    if theme == "snow":
+        return _cfg_merge(common, dict(
+            base_hue=205/360.0, hue_jitter=0.05,
+            body_sat_min=0.04, body_sat_max=0.30,
+            body_v_min=0.10, body_v_max=1.00, body_v_gamma=0.90,
+            body_sat_mul=1.00,
+            sat_dark_boost=0.05,
+            hue_shimmer_amp=0.010,
+            val_shimmer_amp=0.055,
+            spec_edge0=0.52, spec_scale=0.96,
+            sheen_mix=0.30, sheen_sat_boost=0.06, sheen_hue_shift=-0.004,
+            fire_prob=0.55,
+            fire_hues=[190/360.0, 205/360.0, 220/360.0, 235/360.0, 255/360.0],
+            fire_hue_jitter=0.08,
+            fire_sat_base_min=0.10, fire_sat_base_max=0.30,
+            fire_sat_peak_min=0.25, fire_sat_peak_max=0.55,
+            fire_white_mix_min=0.60, fire_white_mix_max=0.88,
+        ))
+
+    raise ValueError(f"Unknown theme: {theme!r}")
+
+
+# -------------------- Per-theme precomputed state ----------------------------
+
+@dataclass
+class PolyHSV:
+    h: float
+    s: float
+    v: float
+    sat_mul: float
+    v_mul: float
+    freq: float
+    phase: float
+    fire_enabled: bool
+    fire_hue: float
+    fire_sat_mul: float
+    fire_white_mix: float
+
+
+@dataclass(frozen=True)
+class MatrixDrop:
+    speed: float
+    phase: float
+    tail: float
+    head: float
+    strength: float
+    flicker_freq: float
+    flicker_phase: float
+
+
+@dataclass(frozen=True)
+class Bubble:
+    x: float
+    y0: float
+    r: float
+    speed: float
+    wob_amp: float
+    wob_freq: float
+    wob_phase: float
+    strength: float
+
+
+# -------------------- Pulse schedules ----------------------------------------
+
+def make_pulses(rng: random.Random, duration: float, theme: str) -> List[Pulse]:
+    # Themes that use their own logic
+    if theme in {"deidee", "matrix", "heart", "static", "champagne"}:
+        return []
+
+    # Slower, more "facet-like" pulses for most non-classic themes
+    if theme != "classic":
+        pulses: List[Pulse] = []
+        n_glints = rng.randint(1, 3)
+        for _ in range(n_glints):
+            t0 = rng.uniform(0.0, duration)
+            half = rng.uniform(2.10, 5.80)
+            amp = rng.uniform(0.70, 1.00)
+            power = rng.uniform(1.0, 1.30)
+            pulses.append(Pulse(t0, half, amp, power=power))
+
+        if rng.random() < 0.60:
+            t0 = rng.uniform(0.0, duration)
+            half = rng.uniform(3.50, 7.50)
+            amp = rng.uniform(0.06, 0.14)
+            pulses.append(Pulse(t0, half, amp, power=1.0))
+
+        return pulses
+
+    # Classic: quicker pulses
+    n = rng.randint(3, 7)
+    pulses: List[Pulse] = []
+    for _ in range(n):
+        t0 = rng.uniform(0.0, duration)
+        half = rng.uniform(0.25, 1.10)
+        amp = rng.uniform(0.55, 1.00)
+        pulses.append(Pulse(t0, half, amp, power=1.0))
+    return pulses
+
+
+# -------------------- Minecraft texture sampling ------------------------------
+
+def _load_minecraft_texture_16x16(source: str) -> Tuple[List[Tuple[int, int, int]], int, int]:
+    if Image is None:
+        raise RuntimeError("Minecraft theme requires Pillow. Install with: py -m pip install pillow")
+
+    src = (source or "").strip() or DEFAULT_MINECRAFT_TEXTURE_URL
+
+    if Path(src).is_file():
+        data = Path(src).read_bytes()
+    else:
+        req = Request(src, headers={"User-Agent": "Mozilla/5.0"})
+        with urlopen(req, timeout=20) as resp:
+            data = resp.read()
+
+    img = Image.open(io.BytesIO(data)).convert("RGBA")
+
+    if hasattr(Image, "Resampling"):
+        resample = Image.Resampling.NEAREST
+    else:
+        resample = Image.NEAREST
+    img = img.resize((16, 16), resample=resample)
+
+    w, h = img.size
+    pixels: List[Tuple[int, int, int]] = []
+    for y in range(h):
+        for x in range(w):
+            r, g, b, _a = img.getpixel((x, y))
+            pixels.append((int(r), int(g), int(b)))
+    return pixels, w, h
+
+
+# -------------------- Static helpers -----------------------------------------
 
 def _fract(x: float) -> float:
     return x - math.floor(x)
 
 
 def _hash01(x: float) -> float:
-    # deterministic 0..1
     return _fract(math.sin(x) * 43758.5453123)
 
 
-# -------------------- ecat helpers -------------------------------------------
+# -------------------- Heart silhouette + pulse (NEW SHAPE, OLD "FEEL") --------
 
-def _beat_wave(t: float) -> float:
+def _beat_wave_old_feel(t: float) -> float:
     """
-    Slower, smoother "double-beat" heartbeat per cycle.
-    Returns 0..1 with brief peaks + a soft decay.
+    A slightly snappier, lively beat (closer to the earlier vibe),
+    but not "too fast". Returns 0..1.
     """
-    cycle = 2.60  # seconds (slower than before)
+    cycle = 2.15  # a bit quicker than the last "slow" version, still relaxed
     p = (t / cycle) % 1.0
 
     def bump(phase: float, center: float, width: float) -> float:
@@ -1187,15 +1215,13 @@ def _beat_wave(t: float) -> float:
         x = d / width
         return 0.5 * (1.0 + math.cos(math.pi * x))
 
-    b1 = bump(p, 0.16, 0.10)   # pre-beat
-    b2 = bump(p, 0.30, 0.14)   # main beat
+    b1 = bump(p, 0.16, 0.10)
+    b2 = bump(p, 0.31, 0.13)
+    tail = 0.22 * (1.0 - _smoothstep(0.31, 0.96, p))
 
-    tail = 0.18 * (1.0 - _smoothstep(0.30, 0.96, p))
-    pulse = 0.08 + 0.45 * b1 + 1.00 * b2 + tail
+    pulse = 0.06 + 0.55 * b1 + 1.00 * b2 + tail
     pulse = _clamp01(pulse)
-
-    # a little sharpening, but keep it smooth
-    return _clamp01(pulse ** 1.08)
+    return _clamp01(pulse ** 1.04)
 
 
 def _heart_icon_val(x: float, y: float) -> float:
@@ -1204,22 +1230,14 @@ def _heart_icon_val(x: float, y: float) -> float:
     Negative is inside.
     """
     x = abs(x)
-
-    # icon-ish proportions: a bit wider, slightly squashed vertically, small upward shift
     x *= 1.12
     y *= 1.02
     y += 0.10
-
-    # classic implicit heart
     a = x * x + y * y - 1.0
     return (a * a * a) - (x * x) * (y * y * y)
 
 
 def _compute_heart_fit(margin: float = 0.02) -> Dict[str, float]:
-    """
-    Auto-fit the implicit heart to fill the [-1..1] screen (minus margin),
-    by scanning a grid for inside points and computing a uniform scale + center.
-    """
     scan_min = -1.75
     scan_max = 1.75
     steps = 420
@@ -1244,7 +1262,6 @@ def _compute_heart_fit(margin: float = 0.02) -> Dict[str, float]:
                     maxy = y
 
     if not (minx < maxx and miny < maxy):
-        # fallback: sane defaults
         return {"scale": 1.20, "cx": 0.0, "cy": 0.0, "margin": margin}
 
     cx = 0.5 * (minx + maxx)
@@ -1267,7 +1284,7 @@ def _heart_mask_icon(nx: float, ny: float, pulse: float, fit: Dict[str, float]) 
     xs = nx * 2.0 - 1.0
     ys = (1.0 - ny) * 2.0 - 1.0
 
-    beat_scale = 1.0 + 0.12 * pulse  # a little growth on beat
+    beat_scale = 1.0 + 0.10 * pulse
     s = fit["scale"] * beat_scale
 
     x = (xs / s) + fit["cx"]
@@ -1275,17 +1292,28 @@ def _heart_mask_icon(nx: float, ny: float, pulse: float, fit: Dict[str, float]) 
 
     val = _heart_icon_val(x, y)
 
-    edge = 0.028  # crisp-ish icon edge
+    edge = 0.032
     mask = 1.0 - _smoothstep(-edge, edge, val)
 
-    glow = math.exp(-abs(val) * 10.5)
+    glow = math.exp(-abs(val) * 9.5)
     return (_clamp01(mask), _clamp01(glow))
+
+
+# -------------------- Champagne (bubbles) ------------------------------------
+
+def _bubble_influence(nx: float, ny: float, bx: float, by: float, r: float) -> float:
+    dx = nx - bx
+    dy = ny - by
+    d2 = dx * dx + dy * dy
+    rr = max(1e-6, r * r)
+    # gaussian-ish falloff
+    return math.exp(-d2 / (2.2 * rr))
 
 
 # -------------------- MAIN ----------------------------------------------------
 
 def main() -> None:
-    ap = argparse.ArgumentParser(description="Generate a polygon animation video from character SVGs (single or NxN logo).")
+    ap = argparse.ArgumentParser(description="Generate a polygon animation video from glyph SVGs (single or NxN logo).")
     g = ap.add_mutually_exclusive_group(required=True)
     g.add_argument("--char", type=str, default=None, help="Single character OR codepoint token (uXXXX / U+XXXX / XXXX).")
     g.add_argument(
@@ -1296,7 +1324,7 @@ def main() -> None:
     )
 
     ap.add_argument("--inverse", action="store_true",
-                    help="Use src/inverse-u{codepoint}.svg instead of src/character-u{codepoint}.svg")
+                    help="Use src/inverse-*.svg instead of src/character-*.svg")
 
     ap.add_argument("--gap", type=int, default=0, choices=[0, 1],
                     help="Logo spacing (only for --chars): 0 = no gaps (default), 1 = pad+gap = 1/8 of cell size.")
@@ -1314,12 +1342,14 @@ def main() -> None:
             "ruby", "jade", "sapphire", "emerald",
             "rainbow",
             "fire", "ice",
-            "valentines", "matrix",
+            "valentines",
+            "matrix",
             "snow",
             "minecraft",
             "deidee",
-            "ecat",
+            "heart",
             "static",
+            "champagne",
         ],
         help="Animation theme.",
     )
@@ -1347,21 +1377,22 @@ def main() -> None:
     src_dir = root / "src"
     out_dir = root / "dist" / "videos"
 
-    glyph_prefix = "inverse" if args.inverse else "character"
-
+    prefix = "inverse" if args.inverse else "character"
     parser = etree.XMLParser(remove_blank_text=False, recover=True, remove_comments=False)
 
+    # ---------------- Input SVG(s) ----------------
     if args.char is not None:
         token, _cp, disp = _parse_char_or_codepoint(args.char)
-        in_svg_path = src_dir / f"{glyph_prefix}-{token}.svg"
+        in_svg_path = _resolve_glyph_svg_path(src_dir, prefix, token, disp)
         if not in_svg_path.is_file():
             raise SystemExit(f"Input SVG not found: {in_svg_path}")
 
         doc = etree.fromstring(in_svg_path.read_bytes(), parser=parser)
 
-        out_stem = f"{glyph_prefix}-{token}"
+        out_stem = f"{prefix}-{token}"
         out_file = out_dir / f"{out_stem}.{args.ext.lower()}"
-        label = f"{glyph_prefix} {disp!r} ({token})"
+        label = f"{prefix} {disp!r} ({token})"
+
     else:
         items = _parse_chars_arg(args.chars or "")
         if not items:
@@ -1373,8 +1404,9 @@ def main() -> None:
             raise SystemExit("--chars must contain 4, 9, or 16 items (characters or codepoints) for 2x2 / 3x3 / 4x4 grids.")
 
         char_paths: List[Path] = []
-        for token, _cp, _disp in items:
-            char_paths.append(src_dir / f"{glyph_prefix}-{token}.svg")
+        for token, _cp, disp in items:
+            p = _resolve_glyph_svg_path(src_dir, prefix, token, disp)
+            char_paths.append(p)
 
         doc = build_logo_svg_from_chars_grid(char_paths, grid_n=grid_n, gap_flag=args.gap)
 
@@ -1383,16 +1415,16 @@ def main() -> None:
         out_file = out_dir / f"{out_stem}.{args.ext.lower()}"
 
         shown = "".join(d for _t, _cp, d in items)
-        label = f"logo {shown!r} ({grid_n}x{grid_n}, gap={args.gap}, {glyph_prefix})"
+        label = f"logo {shown!r} ({grid_n}x{grid_n}, gap={args.gap}, {prefix})"
 
     out_file = _timestamped_if_exists(out_file)
 
+    # ---------------- ViewBox + background override ----------------
     minx, miny, vb_w, vb_h = _parse_viewbox(doc)
     if vb_w <= 0 or vb_h <= 0:
         vb_w, vb_h = 240.0, 240.0
     vb_tuple = (minx, miny, vb_w, vb_h)
 
-    # Background override
     bgcolor = args.bgcolor.strip() or None
     if bgcolor:
         for el in list(doc):
@@ -1419,21 +1451,26 @@ def main() -> None:
         rect.set("fill", bgcolor)
         doc.insert(0, rect)
 
+    # ---------------- Polygons ----------------
     polys = doc.xpath('.//*[local-name()="polygon"]')
     if not polys:
         raise SystemExit("No <polygon> elements found in the input SVG(s).")
 
     rng = random.Random(args.seed)
 
-    # Per-poly normalized centroid
     poly_nx: List[float] = []
     poly_ny: List[float] = []
+    glyph_nx: List[float] = []
+    glyph_ny: List[float] = []
     for p in polys:
         nx, ny = _global_centroid_norm(p, vb_tuple)
         poly_nx.append(nx)
         poly_ny.append(ny)
+        gx, gy = _centroid_in_glyph_norm(p, vb_tuple)
+        glyph_nx.append(gx)
+        glyph_ny.append(gy)
 
-    # Determine base colors (classic)
+    # Base colors (classic)
     override_color = args.color.strip() or None
     base_rgb_override: Optional[Tuple[int, int, int]] = None
     override_hsv: Optional[Tuple[float, float, float]] = None
@@ -1463,12 +1500,100 @@ def main() -> None:
     frames = int(round(float(args.duration) * int(args.fps)))
     fps = int(args.fps)
 
-    # ---------------- Theme-specific precomputation ----------------
+    # ---------------- Theme precompute ----------------
+    # Diamond / HSV: per-poly HSV bases + shimmer
+    poly_hsv: List[PolyHSV] = []
+    if cfg.kind in {"diamond", "hsv"}:
+        for idx in range(len(polys)):
+            nx = poly_nx[idx]
+            ny = poly_ny[idx]
+
+            freq = rng.uniform(0.18, 0.85)
+            phase = rng.uniform(0.0, 1.0)
+
+            # default "facet" value distribution with contrast (more brights, still some deep darks)
+            u = rng.random()
+            if u < 0.18:
+                v = (u / 0.18) * 0.10
+            elif u > 0.82:
+                v = 0.90 + ((u - 0.82) / 0.18) * 0.10
+            else:
+                v = 0.10 + ((u - 0.18) / 0.64) * 0.80
+
+            v *= 0.90 + 0.20 * (0.5 + 0.5 * math.sin(2 * math.pi * (nx * 1.3 + ny * 0.7)))
+            v = _clamp01(v)
+
+            if cfg.kind == "diamond":
+                # greys: store as HSV with very low sat (we'll mostly ignore hue)
+                h = (210/360.0) + rng.uniform(-0.01, 0.01)
+                s = rng.uniform(0.00, 0.10)
+                sat_mul = 1.0
+                v_mul = rng.uniform(0.90, 1.10)
+            else:
+                # colorful body
+                if cfg.base_hue is None:
+                    h = (nx + rng.uniform(-0.05, 0.05)) % 1.0
+                else:
+                    h = (cfg.base_hue
+                         + cfg.hue_jitter * rng.uniform(-1.0, 1.0)
+                         + cfg.hue_tone_amp * (nx - 0.5)) % 1.0
+
+                s = rng.uniform(cfg.body_sat_min, cfg.body_sat_max)
+                sat_mul = rng.uniform(0.85, 1.25)
+
+                # value: slight vertical gradient (lighter toward top) + gamma shaping
+                ug = rng.random()
+                vg = cfg.body_v_min + (cfg.body_v_max - cfg.body_v_min) * (ug ** cfg.body_v_gamma)
+                vg = _clamp01(vg + 0.10 * (0.5 - ny))
+                v = vg
+                v_mul = rng.uniform(0.92, 1.12)
+
+            fire_enabled = (rng.random() < cfg.fire_prob)
+            if cfg.fire_hues:
+                fh = rng.choice(cfg.fire_hues)
+            else:
+                # default "fire" around base hue-ish
+                fh = (h + rng.uniform(-0.10, 0.10)) % 1.0
+
+            fire_sat_mul = rng.uniform(cfg.fire_sat_mul_lo, cfg.fire_sat_mul_hi)
+            fire_white_mix = rng.uniform(cfg.fire_white_mix_min, cfg.fire_white_mix_max)
+
+            poly_hsv.append(PolyHSV(
+                h=h, s=s, v=v,
+                sat_mul=sat_mul,
+                v_mul=v_mul,
+                freq=freq, phase=phase,
+                fire_enabled=fire_enabled,
+                fire_hue=(fh + rng.uniform(-cfg.fire_hue_jitter, cfg.fire_hue_jitter)) % 1.0,
+                fire_sat_mul=fire_sat_mul,
+                fire_white_mix=fire_white_mix,
+            ))
+
+    # Minecraft: texture lookup per polygon
+    mc_pixels: List[Tuple[int, int, int]] = []
+    mc_w = mc_h = 0
+    mc_u: List[float] = []
+    mc_v: List[float] = []
+    mc_freq: List[float] = []
+    mc_phase: List[float] = []
+    mc_glint_bias: List[float] = []
+    if cfg.kind == "minecraft":
+        mc_pixels, mc_w, mc_h = _load_minecraft_texture_16x16(args.minecraft_texture)
+        for idx in range(len(polys)):
+            # use glyph-local coords so texture "sticks" per glyph in logos
+            u = glyph_nx[idx]
+            v = glyph_ny[idx]
+            mc_u.append(u)
+            mc_v.append(v)
+            mc_freq.append(rng.uniform(0.10, 0.45))
+            mc_phase.append(rng.uniform(0.0, 1.0))
+            mc_glint_bias.append(rng.uniform(0.0, 1.0))
+
+    # deidee: per-poly color lists + timings
     de_alpha = 0.5
     de_colors_per_poly: List[List[Tuple[int, int, int]]] = []
     de_seg_dur: List[float] = []
     de_phase: List[float] = []
-
     if cfg.kind == "deidee":
         for _ in polys:
             k = rng.randint(4, 8)
@@ -1481,28 +1606,26 @@ def main() -> None:
             de_colors_per_poly.append(cols)
             de_seg_dur.append(rng.uniform(0.90, 2.60))
             de_phase.append(rng.uniform(0.0, 10.0))
-
         for poly in polys:
             poly.set("fill-opacity", f"{de_alpha:.3f}")
             st = (poly.get("style") or "").strip()
             poly.set("style", _style_set(st, "fill-opacity", f"{de_alpha:.3f}"))
 
-    # ecat fit + per-poly microvariation
+    # heart: fit + per-poly microvariation (shape stays new; vibe back to "older feel")
     heart_fit: Optional[Dict[str, float]] = None
-    ecat_hue_jit: List[float] = []
-    ecat_sat_jit: List[float] = []
-    ecat_tw_f: List[float] = []
-    ecat_tw_p: List[float] = []
-    if cfg.kind == "ecat":
+    heart_hj: List[float] = []
+    heart_sj: List[float] = []
+    heart_tw_f: List[float] = []
+    heart_tw_p: List[float] = []
+    if cfg.kind == "heart":
         heart_fit = _compute_heart_fit(margin=0.02)
         for _ in polys:
-            ecat_hue_jit.append(rng.uniform(-0.010, 0.010))
-            ecat_sat_jit.append(rng.uniform(0.96, 1.10))
-            # slower twinkle than before
-            ecat_tw_f.append(rng.uniform(0.18, 0.55))
-            ecat_tw_p.append(rng.uniform(0.0, 1.0))
+            heart_hj.append(rng.uniform(-0.016, 0.016))
+            heart_sj.append(rng.uniform(0.92, 1.18))
+            heart_tw_f.append(rng.uniform(0.22, 0.95))
+            heart_tw_p.append(rng.uniform(0.0, 1.0))
 
-    # static/noise theme precompute
+    # static: keep as-is (you said it’s fine)
     static_seg: List[float] = []
     static_phase: List[float] = []
     static_color_prob: List[float] = []
@@ -1513,9 +1636,49 @@ def main() -> None:
             static_phase.append(rng.uniform(0.0, 10.0))
             static_color_prob.append(rng.uniform(0.06, 0.14))
 
-    # (The rest of the precomputation for other themes remains as-is; kept minimal here.)
+    # matrix: code-rain drops per column
+    col_count = 24
+    col_drop: List[MatrixDrop] = []
+    col_count = max(14, min(40, int(round(math.sqrt(len(polys)) * 4))))
+    if cfg.kind == "matrix":
+        for _c in range(col_count):
+            col_drop.append(MatrixDrop(
+                speed=rng.uniform(0.10, 0.32),   # downward speed (units/sec)
+                phase=rng.uniform(0.0, 1.0),
+                tail=rng.uniform(0.18, 0.55),
+                head=rng.uniform(0.02, 0.06),
+                strength=rng.uniform(0.65, 1.00),
+                flicker_freq=rng.uniform(3.0, 9.0),
+                flicker_phase=rng.uniform(0.0, 1.0),
+            ))
 
-    # Render frames
+    # champagne: bubbles
+    bubbles: List[Bubble] = []
+    ch_freq: List[float] = []
+    ch_phase: List[float] = []
+    if cfg.kind == "champagne":
+        # bubble count scaled to complexity, capped for speed
+        n_bub = min(90, max(24, int(round(math.sqrt(len(polys)) * 10))))
+        # a few "streams" to make it feel like real bubbly columns
+        stream_x = [rng.uniform(0.12, 0.88) for _ in range(rng.randint(4, 7))]
+        for _ in range(n_bub):
+            sx = rng.choice(stream_x)
+            x = _clamp01(sx + rng.uniform(-0.06, 0.06))
+            bubbles.append(Bubble(
+                x=x,
+                y0=rng.uniform(0.0, 1.0),
+                r=rng.uniform(0.010, 0.040) * rng.uniform(0.8, 1.3),
+                speed=rng.uniform(0.08, 0.26),
+                wob_amp=rng.uniform(0.005, 0.020),
+                wob_freq=rng.uniform(0.20, 0.80),
+                wob_phase=rng.uniform(0.0, 1.0),
+                strength=rng.uniform(0.35, 1.00),
+            ))
+        for _ in polys:
+            ch_freq.append(rng.uniform(0.05, 0.22))
+            ch_phase.append(rng.uniform(0.0, 1.0))
+
+    # ---------------- Render frames ----------------
     tmp_root = Path(tempfile.mkdtemp(prefix="mmxx_video_"))
     frames_dir = tmp_root / "frames"
     frames_dir.mkdir(parents=True, exist_ok=True)
@@ -1526,10 +1689,137 @@ def main() -> None:
         for i in range(frames):
             t = i / float(fps)
 
+            # ambient breathing used by several themes
+            amb = cfg.amb_base + cfg.amb_amp * (0.5 + 0.5 * math.sin(2.0 * math.pi * (cfg.amb_freq * t)))
+
             if cfg.kind == "classic":
                 for idx, poly in enumerate(polys):
                     a = whiteness_at(t, pulses_per_poly[idx])
                     poly.set("fill", _rgb_to_hex(mix_to_white(base_rgbs[idx], a)))
+
+            elif cfg.kind == "diamond":
+                for idx, poly in enumerate(polys):
+                    ph = poly_hsv[idx]
+                    pulse = whiteness_at(t, pulses_per_poly[idx])
+                    shim = facet_shimmer(t, ph.freq, ph.phase)
+
+                    glint = max(cfg.gl_pulse_w * pulse, cfg.gl_shim_w * shim)
+                    spec = _smoothstep(cfg.spec_edge0, 1.0, glint)
+                    spec = _clamp01(spec * cfg.spec_scale)
+
+                    # base grey facet (high contrast)
+                    g0 = _clamp01((ph.v * ph.v_mul))
+                    # push some facets darker and some lighter, but not "all dark at once"
+                    g = _clamp01((g0 - 0.5) * 1.20 + 0.5)
+                    grey = int(round(g * 255.0))
+                    rgb = (grey, grey, grey)
+
+                    # specular to near-white
+                    rgb = _mix_rgb(rgb, (255, 255, 255), 0.18 + 0.72 * spec)
+
+                    # dispersion fire in highlights
+                    if ph.fire_enabled:
+                        gate = _smoothstep(cfg.fire_gate0, 1.0, glint)
+                        if gate > 0.001:
+                            drift = cfg.fire_hue_drift_amp * math.sin(2.0 * math.pi * (cfg.fire_hue_drift_freq * t + ph.phase))
+                            fh = (ph.fire_hue + drift) % 1.0
+                            sat_base = cfg.fire_sat_base_min + (cfg.fire_sat_base_max - cfg.fire_sat_base_min) * (0.5 + 0.5 * math.sin(2*math.pi*(0.15*t + ph.phase)))
+                            sat_peak = cfg.fire_sat_peak_min + (cfg.fire_sat_peak_max - cfg.fire_sat_peak_min) * (0.5 + 0.5 * math.sin(2*math.pi*(0.22*t + ph.freq)))
+                            s = _clamp01((sat_base + gate * sat_peak) * ph.fire_sat_mul)
+                            v = _clamp01(0.55 + 0.45 * gate)
+                            fire_rgb = _hsv01_to_rgb255(fh, s, v)
+                            mix_amt = _clamp01(gate * (0.20 + 0.55 * ph.fire_white_mix))
+                            rgb = _mix_rgb(rgb, fire_rgb, mix_amt)
+
+                    # tiny ambient lift
+                    rgb = mix_to_white(rgb, amb * 0.20)
+
+                    poly.set("fill", _rgb_to_hex(rgb))
+
+            elif cfg.kind == "hsv":
+                for idx, poly in enumerate(polys):
+                    ph = poly_hsv[idx]
+                    pulse = whiteness_at(t, pulses_per_poly[idx])
+                    shim = facet_shimmer(t, ph.freq, ph.phase)
+
+                    # body HSV
+                    drift_h = cfg.hue_shimmer_amp * math.sin(2.0 * math.pi * (0.10 * t + ph.phase))
+                    h = (ph.h + drift_h) % 1.0
+
+                    v = _clamp01((ph.v * ph.v_mul) + cfg.val_shimmer_amp * (shim - 0.5))
+                    # avoid going too close to black/white too often
+                    v = _clamp01(0.06 + 0.90 * v)
+
+                    s = ph.s * cfg.body_sat_mul * ph.sat_mul
+                    s = _clamp01(s + cfg.sat_dark_boost * (1.0 - v))
+
+                    rgb = _hsv01_to_rgb255(h, s, v)
+
+                    glint = max(cfg.gl_pulse_w * pulse, cfg.gl_shim_w * shim)
+                    spec = _smoothstep(cfg.spec_edge0, 1.0, glint)
+                    spec = _clamp01(spec * cfg.spec_scale)
+
+                    # sheen (tinted specular)
+                    sh = (h + cfg.sheen_hue_shift) % 1.0
+                    ss = _clamp01(s + cfg.sheen_sat_boost)
+                    sheen_rgb = _hsv01_to_rgb255(sh, ss, 1.0)
+                    rgb = _mix_rgb(rgb, sheen_rgb, cfg.sheen_mix * spec)
+
+                    # modest white sparkle, but not constantly
+                    rgb = _mix_rgb(rgb, (255, 255, 255), 0.06 * spec)
+
+                    # dispersion in highlights
+                    if ph.fire_enabled:
+                        gate = _smoothstep(cfg.fire_gate0, 1.0, glint)
+                        if gate > 0.001:
+                            drift = cfg.fire_hue_drift_amp * math.sin(2.0 * math.pi * (cfg.fire_hue_drift_freq * t + ph.phase))
+                            fh = (ph.fire_hue + drift) % 1.0
+                            sat_base = cfg.fire_sat_base_min + (cfg.fire_sat_base_max - cfg.fire_sat_base_min) * (0.5 + 0.5 * math.sin(2*math.pi*(0.15*t + ph.phase)))
+                            sat_peak = cfg.fire_sat_peak_min + (cfg.fire_sat_peak_max - cfg.fire_sat_peak_min) * (0.5 + 0.5 * math.sin(2*math.pi*(0.22*t + ph.freq)))
+                            s2 = _clamp01((sat_base + gate * sat_peak) * ph.fire_sat_mul)
+                            v2 = _clamp01(0.55 + 0.45 * gate)
+                            fire_rgb = _hsv01_to_rgb255(fh, s2, v2)
+                            mix_amt = _clamp01(gate * 0.45)
+                            rgb = _mix_rgb(rgb, fire_rgb, mix_amt)
+
+                    # ambient breathing
+                    rgb = mix_to_white(rgb, amb * 0.10)
+
+                    poly.set("fill", _rgb_to_hex(rgb))
+
+            elif cfg.kind == "minecraft":
+                for idx, poly in enumerate(polys):
+                    u = mc_u[idx]
+                    v = mc_v[idx]
+                    px = int(round(u * (mc_w - 1)))
+                    py = int(round(v * (mc_h - 1)))
+                    base = mc_pixels[py * mc_w + px]
+
+                    # gentle time variation: tiny luma modulation + occasional glints
+                    shim = facet_shimmer(t, mc_freq[idx], mc_phase[idx])
+                    pulse = whiteness_at(t, pulses_per_poly[idx]) if pulses_per_poly[idx] else 0.0
+
+                    # small contrast/luma wobble
+                    wob = 0.92 + 0.12 * (0.5 + 0.5 * math.sin(2.0 * math.pi * (0.07 * t + mc_phase[idx])))
+                    rgb = (
+                        max(0, min(255, int(round(base[0] * wob)))),
+                        max(0, min(255, int(round(base[1] * wob)))),
+                        max(0, min(255, int(round(base[2] * wob)))),
+                    )
+
+                    glint = max(cfg.gl_shim_w * shim, cfg.gl_pulse_w * pulse)
+                    spec = _smoothstep(cfg.spec_edge0, 1.0, glint) * cfg.spec_scale
+
+                    # warm-ish sun glint (subtle)
+                    if spec > 0.0:
+                        sun = _hsv01_to_rgb255(45/360.0, 0.18, 1.0)
+                        rgb = _mix_rgb(rgb, sun, 0.12 * spec)
+                        rgb = _mix_rgb(rgb, (255, 255, 255), 0.28 * spec)
+
+                    # ambient lift
+                    rgb = mix_to_white(rgb, amb * 0.06)
+
+                    poly.set("fill", _rgb_to_hex(rgb))
 
             elif cfg.kind == "deidee":
                 for idx, poly in enumerate(polys):
@@ -1552,7 +1842,6 @@ def main() -> None:
                     poly.set("style", _style_set(st, "fill-opacity", f"{de_alpha:.3f}"))
 
             elif cfg.kind == "static":
-                # TV-like noise: mostly greys + rare color specks
                 for idx, poly in enumerate(polys):
                     seg = static_seg[idx]
                     ph = static_phase[idx]
@@ -1561,18 +1850,17 @@ def main() -> None:
                     f = pos - math.floor(pos)
                     u = _cosine_ease(f)
 
-                    # two deterministic samples -> interpolate
                     a0 = _hash01(static_seedf * 0.001 + idx * 12.9898 + k0 * 78.233)
                     a1 = _hash01(static_seedf * 0.001 + idx * 12.9898 + (k0 + 1) * 78.233)
                     a = (1.0 - u) * a0 + u * a1
 
-                    # contrast curve (more darks and brights)
+                    # contrast curve
                     a = _clamp01((a - 0.5) * 1.85 + 0.5)
-                    v = 0.06 + 0.94 * a
+                    vv = 0.06 + 0.94 * a
 
-                    # scanline-ish modulation (subtle)
+                    # scanline-ish modulation
                     scan = 0.95 + 0.05 * math.sin(2.0 * math.pi * (poly_ny[idx] * 90.0 + t * 1.25))
-                    v = _clamp01(v * scan)
+                    vv = _clamp01(vv * scan)
 
                     # occasional color speck
                     csel0 = _hash01(static_seedf * 0.002 + idx * 3.11 + k0 * 9.73)
@@ -1584,30 +1872,114 @@ def main() -> None:
                         h1 = _hash01(static_seedf * 0.003 + idx * 0.77 + (k0 + 1) * 2.17)
                         h = ((1.0 - u) * h0 + u * h1) % 1.0
                         s = 0.55 + 0.45 * _hash01(static_seedf * 0.004 + idx * 1.33 + k0 * 6.19)
-                        vv = 0.25 + 0.75 * v
-                        rgb = _hsv01_to_rgb255(h, s, vv)
+                        rgb = _hsv01_to_rgb255(h, s, 0.25 + 0.75 * vv)
                     else:
-                        g = int(round(v * 255.0))
+                        g = int(round(vv * 255.0))
                         rgb = (g, g, g)
 
                     poly.set("fill", _rgb_to_hex(rgb))
 
-            elif cfg.kind == "ecat":
-                pulse = _beat_wave(t)
+            elif cfg.kind == "matrix":
+                for idx, poly in enumerate(polys):
+                    nx = poly_nx[idx]
+                    ny = poly_ny[idx]
+                    c = int(_clamp01(nx) * (col_count - 1))
+                    d = col_drop[c]
+
+                    # downward head position (wrap)
+                    head = (d.phase + d.speed * t) % 1.0
+                    # distance from head going downward (wrap)
+                    dist = (ny - head) % 1.0
+
+                    if dist <= d.head:
+                        inten = 1.0
+                    elif dist <= d.tail:
+                        z = 1.0 - (dist - d.head) / max(1e-6, (d.tail - d.head))
+                        inten = (z * z)
+                    else:
+                        inten = 0.0
+
+                    # flicker
+                    fl = 0.72 + 0.28 * math.sin(2.0 * math.pi * (d.flicker_freq * t + d.flicker_phase))
+                    inten = _clamp01(inten * d.strength * fl)
+
+                    # background: very dark green-black with subtle variation
+                    bg_v = 0.02 + 0.04 * (0.5 + 0.5 * math.sin(2.0 * math.pi * (0.18 * t + nx * 1.7 + ny * 0.9)))
+                    bg = _hsv01_to_rgb255(120/360.0, 0.55, bg_v)
+
+                    if inten <= 0.0:
+                        rgb = bg
+                    else:
+                        # head is whiter, tail greener
+                        headness = _smoothstep(0.75, 1.0, inten)
+                        g_v = 0.10 + 0.90 * inten
+                        green = _hsv01_to_rgb255(120/360.0, 1.0, g_v)
+                        rgb = _mix_rgb(bg, green, 0.85)
+                        rgb = _mix_rgb(rgb, (255, 255, 255), 0.40 * headness)
+
+                    poly.set("fill", _rgb_to_hex(rgb))
+
+            elif cfg.kind == "champagne":
+                # warm liquid + bubbles rising upward
+                for idx, poly in enumerate(polys):
+                    nx = poly_nx[idx]
+                    ny = poly_ny[idx]
+
+                    # base liquid (slightly lighter at top)
+                    h = (45/360.0) + 0.010 * math.sin(2.0 * math.pi * (0.04 * t + ch_phase[idx]))
+                    s = 0.18 + 0.12 * (0.5 + 0.5 * math.sin(2.0 * math.pi * (ch_freq[idx] * t + ch_phase[idx])))
+                    v = 0.30 + 0.55 * (1.0 - ny)  # brighter near top
+                    # add gentle moving shimmer
+                    v += 0.06 * (facet_shimmer(t, 0.12 + ch_freq[idx], ch_phase[idx]) - 0.5)
+                    v = _clamp01(v)
+
+                    rgb = _hsv01_to_rgb255(h, s, v)
+
+                    # bubbles: add bright near-white circles that move upward
+                    bub = 0.0
+                    bub_edge = 0.0
+                    for b in bubbles:
+                        # bubble y rises upward (ny decreases)
+                        by = (b.y0 - b.speed * t) % 1.0
+                        bx = _clamp01(b.x + b.wob_amp * math.sin(2.0 * math.pi * (b.wob_freq * t + b.wob_phase)))
+                        infl = _bubble_influence(nx, ny, bx, by, b.r)
+                        if infl > 1e-6:
+                            bub = max(bub, infl * b.strength)
+                            # edge highlight: a slightly tighter radius
+                            infl2 = _bubble_influence(nx, ny, bx, by, b.r * 0.60)
+                            bub_edge = max(bub_edge, infl2 * b.strength)
+
+                    bub = _clamp01(bub)
+                    bub_edge = _clamp01(bub_edge)
+
+                    if bub > 0.0:
+                        # bright bubble body: white with a tiny cool tint
+                        bubble_rgb = _hsv01_to_rgb255(200/360.0, 0.08, 1.0)
+                        rgb = _mix_rgb(rgb, bubble_rgb, 0.70 * bub)
+                        # stronger sparkle on bubble core/edge
+                        rgb = _mix_rgb(rgb, (255, 255, 255), 0.55 * bub_edge)
+
+                        # tiny dispersion tint on the brightest highlights
+                        tint_gate = _smoothstep(0.30, 0.90, bub_edge)
+                        if tint_gate > 0.0:
+                            fh = (0.10 + 0.20 * math.sin(2.0 * math.pi * (0.06 * t + nx))) % 1.0
+                            tint = _hsv01_to_rgb255(fh, 0.55, 1.0)
+                            rgb = _mix_rgb(rgb, tint, 0.10 * tint_gate)
+
+                    # ambient lift
+                    rgb = mix_to_white(rgb, amb * 0.08)
+
+                    poly.set("fill", _rgb_to_hex(rgb))
+
+            elif cfg.kind == "heart":
+                pulse = _beat_wave_old_feel(t)
                 assert heart_fit is not None
 
-                # allow --color to steer hue, but keep it heart-ish
+                # "older" lively feel: darker bg (but not crushed), vivid heart, strong glints
                 if override_hsv is not None:
                     heart_h_base = override_hsv[0]
                 else:
-                    heart_h_base = 350 / 360.0  # hot pink/red
-
-                # white-ish background with a tiny vignette, so "whitespace" isn't dark
-                bg_h = 215 / 360.0
-                bg_s = 0.06
-
-                # gentle ambient breathing (very subtle)
-                amb = cfg.amb_base + cfg.amb_amp * (0.5 + 0.5 * math.sin(2.0 * math.pi * (cfg.amb_freq * t)))
+                    heart_h_base = 350 / 360.0
 
                 for idx, poly in enumerate(polys):
                     nx = poly_nx[idx]
@@ -1615,55 +1987,55 @@ def main() -> None:
 
                     mask, glow = _heart_mask_icon(nx, ny, pulse, heart_fit)
 
-                    # vignette: slightly darker at corners, still bright overall
-                    dx = nx - 0.5
-                    dy = ny - 0.5
-                    r = math.sqrt(dx * dx + dy * dy)
-                    v_bg = 0.975 - 0.10 * _smoothstep(0.25, 0.90, r)
-                    bg_rgb = _hsv01_to_rgb255(bg_h, bg_s, v_bg)
+                    # Background: dark charcoal with subtle purple tint (contrasty like before)
+                    bg_h = 260/360.0
+                    bg_s = 0.22
+                    vign = math.sqrt((nx - 0.5) ** 2 + (ny - 0.5) ** 2)
+                    bg_v = 0.06 + 0.06 * (1.0 - _smoothstep(0.18, 0.95, vign))
+                    bg_v += 0.02 * math.sin(2.0 * math.pi * (0.05 * t + nx * 0.9 + ny * 0.4))
+                    bg_v = _clamp01(bg_v)
+                    bg_rgb = _hsv01_to_rgb255(bg_h, bg_s, bg_v)
 
-                    # soft shadow just outside the heart boundary
-                    shadow = (1.0 - mask) * glow
-                    bg_rgb = _mix_rgb(bg_rgb, (210, 210, 220), shadow * 0.35)
-
-                    # heart color: graphic + bright on pulse, but never “muddy”
+                    # Heart base: vivid pink->magenta with slight spatial hue sweep
                     h = (heart_h_base
-                         + 0.028 * (nx - 0.5)
-                         + 0.010 * math.sin(2.0 * math.pi * (0.10 * t + ny * 0.60))
-                         + ecat_hue_jit[idx]) % 1.0
+                         + 0.045 * (nx - 0.5)
+                         + 0.020 * math.sin(2.0 * math.pi * (0.08 * t + ny * 0.75))
+                         + heart_hj[idx]) % 1.0
 
-                    s = _clamp01((0.78 + 0.22 * mask + 0.10 * glow) * ecat_sat_jit[idx])
+                    # Saturation: lively, not always max; modulated by pulse and glow
+                    s = (0.70 + 0.25 * mask + 0.18 * glow) * heart_sj[idx]
+                    s *= (0.85 + 0.30 * (0.5 + 0.5 * math.sin(2.0 * math.pi * (0.11 * t + heart_tw_p[idx]))))
+                    s = _clamp01(s)
 
-                    # brighter baseline than before (avoid dark “whitespace” in the look)
-                    v = 0.30 + 0.42 * mask
-                    v += 0.36 * mask * (0.25 + 0.75 * pulse)
-                    v += 0.18 * glow * (0.35 + 0.65 * pulse)
+                    # Value: keep heart "whitespace" lighter than bg, with pulsing lift
+                    v = 0.18 + 0.40 * mask
+                    v += 0.35 * mask * (0.22 + 0.78 * pulse)
+                    v += 0.22 * glow * (0.35 + 0.65 * pulse)
                     v = _clamp01(v)
 
                     heart_rgb = _hsv01_to_rgb255(h, s, v)
 
-                    # blend heart into bg
+                    # Blend heart into bg
                     rgb = _mix_rgb(bg_rgb, heart_rgb, mask)
 
-                    # boundary glow pop (white-ish + tinted)
-                    glow_mix = _clamp01(glow * (0.18 + 0.28 * pulse))
-                    rgb = _mix_rgb(rgb, (255, 255, 255), glow_mix * 0.55)
-                    rgb = _mix_rgb(rgb, heart_rgb, glow_mix * 0.30)
+                    # Edge glow (white-ish, with a bit of tinted energy like before)
+                    edge = _clamp01(glow * (0.20 + 0.35 * pulse))
+                    rgb = _mix_rgb(rgb, (255, 255, 255), 0.42 * edge)
+                    rgb = _mix_rgb(rgb, heart_rgb, 0.25 * edge)
 
-                    # slow twinkle highlights inside heart during beat peaks
-                    tw = facet_shimmer(t, ecat_tw_f[idx], ecat_tw_p[idx])
-                    tw = (mask ** 1.60) * (tw ** 1.35)
-                    white_mix = _clamp01(tw * (0.05 + 0.18 * pulse) + (mask ** 2.1) * (0.03 + 0.08 * pulse))
-                    rgb = _mix_rgb(rgb, (255, 255, 255), white_mix)
+                    # Sparkly twinkles inside heart (brighter + more frequent than the last slow version)
+                    tw = facet_shimmer(t, heart_tw_f[idx], heart_tw_p[idx])
+                    tw = (mask ** 1.55) * (tw ** 1.25)
+                    sparkle = _clamp01(tw * (0.07 + 0.24 * pulse) + (mask ** 2.0) * (0.02 + 0.06 * pulse))
+                    rgb = _mix_rgb(rgb, (255, 255, 255), sparkle)
 
-                    # tiny ambient lift
-                    rgb = mix_to_white(rgb, amb)
+                    # subtle ambient breathing
+                    rgb = mix_to_white(rgb, amb * 0.10)
 
                     poly.set("fill", _rgb_to_hex(rgb))
 
             else:
-                # For all other themes, keep the previous behavior (pulse/spec/fire/etc.).
-                # (Intentionally left unchanged to keep this patch focused.)
+                # Should not happen (all kinds handled)
                 for idx, poly in enumerate(polys):
                     a = whiteness_at(t, pulses_per_poly[idx])
                     poly.set("fill", _rgb_to_hex(mix_to_white(base_rgbs[idx], a)))
