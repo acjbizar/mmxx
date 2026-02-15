@@ -5,15 +5,18 @@ tools/generate-video.py
 
 Generate a video from either:
   - --char  -> src/character-{char}.svg
-  - --chars -> combines 4x src/character-{c}.svg into a single SVG (2x2 layout: [0 1; 2 3])
+  - --chars -> combines N character SVGs into a single SVG grid (NxN) where N depends on len(chars):
+        4  -> 2x2
+        9  -> 3x3
+        16 -> 4x4
+    Order is left-to-right, top-to-bottom.
 
-Logo layout (for --chars):
-- Always 2 by 2: [0 1; 2 3]
-- --gap 0 (default): no extra spacing
+Grid layout (for --chars):
+- --gap 0 (default): no extra spacing/padding
 - --gap 1: spacing AND outer padding = 1/8th of a character cell size
 
 Also in --chars mode:
-- Removes per-glyph full-canvas WHITE background rects (prevents 4 white squares)
+- Removes per-glyph full-canvas WHITE background rects (prevents white squares).
 
 Themes:
 - classic (default): pulse-to-white using polygon base colors (or --color)
@@ -21,6 +24,7 @@ Themes:
 - silver / gold / bronze: metallic hue drift + colored sheen + glints
 - ruby / jade / sapphire / emerald: gem saturation + absorption-like depth + glints
 - rainbow: per-facet hue + iridescent drift + colorful highlights
+- fire / ice: stylized warm/cool materials (colorful glints; less white-mix than classic)
 - minecraft: samples the real Grass Block (carried side texture) pixels (16×16) per polygon centroid,
             animated via facet lighting + neighbour "pixel sparkle"
 - deidee: cycles polygon colors ONLY between samples of:
@@ -211,9 +215,6 @@ def _smoothstep(edge0: float, edge1: float, x: float) -> float:
 
 
 def _cosine_ease(x: float) -> float:
-    """
-    Smooth 0..1 -> 0..1 (cosine).
-    """
     x = _clamp01(x)
     return 0.5 - 0.5 * math.cos(math.pi * x)
 
@@ -316,6 +317,10 @@ def _load_minecraft_texture_16x16(source: str) -> Tuple[List[Tuple[int, int, int
 
 
 def _glyph_viewbox_for_element(el: etree._Element, fallback: Tuple[float, float, float, float]) -> Tuple[float, float, float, float]:
+    """
+    In --chars mode, each glyph is wrapped in a <g> with data-minx/miny/vbw/vbh.
+    Use that so minecraft sampling is per-glyph (16x16 per character), not per whole logo canvas.
+    """
     cur = el
     while cur is not None and isinstance(cur.tag, str):
         vbw = cur.get("data-vbw")
@@ -333,7 +338,7 @@ def _glyph_viewbox_for_element(el: etree._Element, fallback: Tuple[float, float,
     return fallback
 
 
-# -------------------- Logo building (combine 4 character SVGs) ----------------
+# -------------------- Logo building (combine character SVGs into grid) --------
 
 _URL_ID_RE = re.compile(r"url\(#([^)]+)\)")
 
@@ -415,9 +420,14 @@ def _strip_white_full_canvas_rects(svg_root: etree._Element, vb: Tuple[float, fl
                 parent.remove(r)
 
 
-def build_logo_svg_from_chars_2x2(char_svgs: List[Path], gap_flag: int) -> etree._Element:
-    if len(char_svgs) != 4:
-        raise ValueError("Expected exactly 4 character SVG paths for logo mode.")
+def build_logo_svg_from_chars_grid(char_svgs: List[Path], grid_n: int, gap_flag: int) -> etree._Element:
+    """
+    grid_n: 2, 3, 4  (expects len(char_svgs) == grid_n*grid_n)
+    """
+    if grid_n not in (2, 3, 4):
+        raise ValueError("grid_n must be 2, 3, or 4.")
+    if len(char_svgs) != grid_n * grid_n:
+        raise ValueError(f"Expected {grid_n*grid_n} character SVG paths for {grid_n}x{grid_n} grid.")
 
     parser = etree.XMLParser(remove_blank_text=False, recover=True, remove_comments=False)
     glyph_docs: List[etree._Element] = []
@@ -443,15 +453,15 @@ def build_logo_svg_from_chars_2x2(char_svgs: List[Path], gap_flag: int) -> etree
     else:
         gap_x = gap_y = pad_x = pad_y = 0.0
 
-    total_w = 2.0 * max_w + gap_x + 2.0 * pad_x
-    total_h = 2.0 * max_h + gap_y + 2.0 * pad_y
+    total_w = grid_n * max_w + (grid_n - 1) * gap_x + 2.0 * pad_x
+    total_h = grid_n * max_h + (grid_n - 1) * gap_y + 2.0 * pad_y
 
     svg = etree.Element(f"{{{SVG_NS}}}svg", nsmap={None: SVG_NS, "xlink": XLINK_NS})
     svg.set("viewBox", f"0 0 {total_w} {total_h}")
 
     for idx, (groot, (minx, miny, vbw, vbh)) in enumerate(zip(glyph_docs, vbs)):
-        row = 0 if idx < 2 else 1
-        col = idx % 2
+        row = idx // grid_n
+        col = idx % grid_n
 
         cell_x0 = pad_x + col * (max_w + gap_x)
         cell_y0 = pad_y + row * (max_h + gap_y)
@@ -813,11 +823,8 @@ def get_theme_config(theme: str) -> ThemeConfig:
             hue_tone_amp=0.012,
             hue_shimmer_amp=0.020,
             val_shimmer_amp=0.030,
-
             spec_edge0=0.46, spec_scale=0.92,
             sheen_mix=0.10, sheen_sat_boost=0.36, sheen_hue_shift=0.018,
-
-            # lots of “hot” glints; keep them colorful, not white
             fire_prob=0.92,
             fire_hues=[0/360.0, 12/360.0, 25/360.0, 40/360.0, 55/360.0, 65/360.0, 330/360.0],
             fire_hue_jitter=0.11,
@@ -836,17 +843,66 @@ def get_theme_config(theme: str) -> ThemeConfig:
             hue_tone_amp=0.010,
             hue_shimmer_amp=0.020,
             val_shimmer_amp=0.040,
-
             spec_edge0=0.52, spec_scale=0.92,
             sheen_mix=0.22, sheen_sat_boost=0.30, sheen_hue_shift=-0.010,
-
-            # prismatic “ice” glints; allow some white, but not always
             fire_prob=0.62,
             fire_hues=[175/360.0, 195/360.0, 210/360.0, 225/360.0, 245/360.0, 275/360.0],
             fire_hue_jitter=0.10,
             fire_sat_base_min=0.25, fire_sat_base_max=0.55,
             fire_sat_peak_min=0.75, fire_sat_peak_max=1.00,
             fire_white_mix_min=0.12, fire_white_mix_max=0.35,
+        ))
+
+    if theme == "valentines":
+        # Pink/red candy-gloss: bright body, high saturation, sparkly hot-pink glints,
+        # occasional white twinkle but not too much.
+        return _cfg_merge(common, dict(
+            base_hue=335/360.0, hue_jitter=0.090,     # magenta->red range
+            body_sat_min=0.78, body_sat_max=1.00,
+            body_v_min=0.22, body_v_max=0.98, body_v_gamma=0.95,
+            body_sat_mul=1.10,
+            sat_dark_boost=0.18,
+            hue_tone_amp=0.012,
+            hue_shimmer_amp=0.028,
+            val_shimmer_amp=0.045,
+
+            spec_edge0=0.50, spec_scale=0.92,
+            sheen_mix=0.16, sheen_sat_boost=0.34, sheen_hue_shift=0.010,
+
+            # Make “sparkles” colorful (pink/red) with some white twinkles.
+            fire_prob=0.78,
+            fire_hues=[350/360.0, 0/360.0, 10/360.0, 330/360.0, 315/360.0, 45/360.0],
+            fire_hue_jitter=0.10,
+            fire_sat_base_min=0.28, fire_sat_base_max=0.62,
+            fire_sat_peak_min=0.80, fire_sat_peak_max=1.00,
+            fire_white_mix_min=0.10, fire_white_mix_max=0.38,
+        ))
+
+    if theme == "matrix":
+        # Neon-green-on-black vibe: very dark greens most of the time,
+        # frequent vivid green glints (little-to-no white).
+        return _cfg_merge(common, dict(
+            base_hue=120/360.0, hue_jitter=0.040,     # green band
+            body_sat_min=0.85, body_sat_max=1.00,
+            body_v_min=0.03, body_v_max=0.88, body_v_gamma=1.25,  # skew darker
+            body_sat_mul=1.12,
+            sat_dark_boost=0.22,
+            hue_tone_amp=0.006,
+            hue_shimmer_amp=0.018,
+            val_shimmer_amp=0.030,
+
+            # Lower threshold => more “sparkle points”
+            spec_edge0=0.44, spec_scale=0.94,
+
+            # Keep highlights neon, not white
+            sheen_mix=0.06, sheen_sat_boost=0.40, sheen_hue_shift=-0.010,
+
+            fire_prob=0.92,
+            fire_hues=[110/360.0, 120/360.0, 130/360.0, 95/360.0, 145/360.0],
+            fire_hue_jitter=0.06,
+            fire_sat_base_min=0.35, fire_sat_base_max=0.75,
+            fire_sat_peak_min=0.90, fire_sat_peak_max=1.00,
+            fire_white_mix_min=0.02, fire_white_mix_max=0.14,
         ))
 
     raise ValueError(f"Unknown theme: {theme!r}")
@@ -994,11 +1050,15 @@ def _timestamped_if_exists(path: Path) -> Path:
 # -------------------- MAIN ----------------------------------------------------
 
 def main() -> None:
-    ap = argparse.ArgumentParser(description="Generate a polygon-pulse video from a character SVG or a 4-char logo.")
+    ap = argparse.ArgumentParser(description="Generate a polygon-pulse video from a character SVG or a square-grid logo.")
     g = ap.add_mutually_exclusive_group(required=True)
     g.add_argument("--char", type=str, default=None, help="Single character: uses src/character-{char}.svg")
-    g.add_argument("--chars", type=str, default=None,
-                   help="Four chars key (ignoring spaces). Combines 4 character SVGs into 2x2.")
+    g.add_argument(
+        "--chars",
+        type=str,
+        default=None,
+        help="A square number of chars (ignoring spaces): 4->2x2, 9->3x3, 16->4x4. Combines character SVGs into a grid.",
+    )
 
     ap.add_argument("--gap", type=int, default=0, choices=[0, 1],
                     help="Logo spacing (only for --chars): 0 = no gaps (default), 1 = pad+gap = 1/8 of cell size.")
@@ -1015,9 +1075,10 @@ def main() -> None:
             "silver", "gold", "bronze",
             "ruby", "jade", "sapphire", "emerald",
             "rainbow",
+            "fire", "ice",
+            "valentines", "matrix",
             "minecraft",
             "deidee",
-            "fire", "ice",
         ],
         help="Animation theme.",
     )
@@ -1059,12 +1120,14 @@ def main() -> None:
         label = f"character {ch!r}"
     else:
         key = "".join(c for c in args.chars.strip() if not c.isspace()).lower()
-        if len(key) != 4:
-            raise SystemExit("--chars must be exactly four characters (ignoring spaces).")
+        n = len(key)
+        grid_n = int(round(math.sqrt(n)))
+        if grid_n * grid_n != n or grid_n not in (2, 3, 4):
+            raise SystemExit("--chars must be 4, 9, or 16 characters long (ignoring spaces), for 2x2 / 3x3 / 4x4 grids.")
         char_paths = [src_dir / f"character-{c}.svg" for c in key]
-        doc = build_logo_svg_from_chars_2x2(char_paths, args.gap)
+        doc = build_logo_svg_from_chars_grid(char_paths, grid_n=grid_n, gap_flag=args.gap)
         out_file = out_dir / f"logo-{key}.{args.ext.lower()}"
-        label = f"logo {key!r} (2x2, gap={args.gap})"
+        label = f"logo {key!r} ({grid_n}x{grid_n}, gap={args.gap})"
 
     out_file = _timestamped_if_exists(out_file)
 
@@ -1133,7 +1196,6 @@ def main() -> None:
     de_phase: List[float] = []
 
     if cfg.kind == "deidee":
-        # each polygon cycles through K colors, smoothly
         for _ in polys:
             k = rng.randint(4, 8)
             cols: List[Tuple[int, int, int]] = []
@@ -1143,18 +1205,15 @@ def main() -> None:
                 b = int(round(rng.uniform(0.0, 0.75) * 255.0))
                 cols.append((max(0, min(255, r)), max(0, min(255, g)), max(0, min(255, b))))
             de_colors_per_poly.append(cols)
+            de_seg_dur.append(rng.uniform(0.90, 2.60))
+            de_phase.append(rng.uniform(0.0, 10.0))
 
-            # slower iteration so it feels intentional, not flickery
-            de_seg_dur.append(rng.uniform(0.90, 2.60))   # seconds per transition
-            de_phase.append(rng.uniform(0.0, 10.0))      # desync polygons a bit
-
-        # force opacity to win even if a polygon has style-based opacity
         for poly in polys:
             poly.set("fill-opacity", f"{de_alpha:.3f}")
             st = (poly.get("style") or "").strip()
             poly.set("style", _style_set(st, "fill-opacity", f"{de_alpha:.3f}"))
 
-    # ---------------- Minecraft per-poly sampled pixels (base + neighbours) ----------------
+    # ---------------- Minecraft / other theme params ----------------
     mc_tex: Optional[List[Tuple[int, int, int]]] = None
     mc_tw = mc_th = 0
     mc_base_rgb: List[Tuple[int, int, int]] = []
@@ -1165,7 +1224,6 @@ def main() -> None:
     mc_flicker_freq: List[float] = []
     mc_flicker_phase: List[float] = []
 
-    # Shared non-classic arrays (for diamond/hsv_body/minecraft)
     poly_tone_base: List[float] = []
     poly_tone_phase: List[float] = []
     poly_shimmer_freq: List[float] = []
@@ -1207,7 +1265,7 @@ def main() -> None:
             poly_shimmer_freq.append(rng.uniform(0.05, 0.14))
             poly_shimmer_phase.append(rng.uniform(0.0, 1.0))
 
-            # hue/sat body (unused for diamond/minecraft but kept aligned)
+            # body hue/sat (unused for diamond/minecraft but kept aligned)
             if cfg.kind in ("diamond", "minecraft"):
                 poly_body_hue.append(0.0)
                 poly_body_sat.append(0.0)
@@ -1227,7 +1285,7 @@ def main() -> None:
                     poly_body_hue.append(h)
                     poly_body_sat.append(s)
 
-            # fire (if enabled by theme)
+            # fire/glint settings
             poly_fire_enabled.append(rng.random() < cfg.fire_prob)
             if cfg.fire_hues is not None:
                 h_fire = rng.choice(cfg.fire_hues)
@@ -1253,9 +1311,7 @@ def main() -> None:
             if cfg.kind == "minecraft":
                 c = _poly_centroid_local(poly) or (0.5 * 240.0, 0.5 * 240.0)
                 gx, gy = c
-
                 gminx, gminy, gvw, gvh = _glyph_viewbox_for_element(poly, (minx, miny, vb_w, vb_h))
-
                 nx = (gx - gminx) / gvw if gvw > 0 else 0.5
                 ny = (gy - gminy) / gvh if gvh > 0 else 0.5
                 nx = _clamp01(nx)
@@ -1316,7 +1372,6 @@ def main() -> None:
                     poly.set("fill", _rgb_to_hex(mix_to_white(base_rgbs[idx], a)))
 
             elif cfg.kind == "deidee":
-                # smooth cycling between random samples; keep alpha constant
                 for idx, poly in enumerate(polys):
                     cols = de_colors_per_poly[idx]
                     k = len(cols)
@@ -1332,13 +1387,11 @@ def main() -> None:
                     rgb = _mix_rgb(cols[i0], cols[i1], u)
                     poly.set("fill", _rgb_to_hex(rgb))
 
-                    # enforce transparency every frame (wins over inherited styles)
                     poly.set("fill-opacity", f"{de_alpha:.3f}")
                     st = (poly.get("style") or "").strip()
                     poly.set("style", _style_set(st, "fill-opacity", f"{de_alpha:.3f}"))
 
             else:
-                # existing non-classic themes
                 global_amb = cfg.amb_base + cfg.amb_amp * (0.5 + 0.5 * math.sin(2.0 * math.pi * (cfg.amb_freq * t)))
 
                 for idx, poly in enumerate(polys):
