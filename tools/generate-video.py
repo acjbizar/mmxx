@@ -4,7 +4,7 @@
 tools/generate-video.py
 
 Generate a video from either:
-  - --char  -> src/character-{char}.svg
+  - --char  -> src/character-u{codepoint}.svg  (fallback: src/character-{char}.svg)
   - --chars -> combines N character SVGs into a single SVG grid (NxN) where N depends on len(chars):
         4  -> 2x2
         9  -> 3x3
@@ -81,6 +81,37 @@ DEFAULT_MINECRAFT_TEXTURE_URL = (
     "https://static.wikia.nocookie.net/minecraft_gamepedia/images/b/b2/"
     "Grass_Block_%28carried_side_texture%29_BE1.png/revision/latest?cb=20200928054656"
 )
+
+
+# -------------------- Helpers: filename resolution ---------------------------
+
+def _cp_slug_for_char(ch: str) -> str:
+    """Return filename slug like u0061 or u1f642 (lowercase hex, padded to >=4)."""
+    cp = ord(ch)
+    return "u" + format(cp, "x").rjust(4, "0")
+
+
+def resolve_character_svg(src_dir: Path, ch: str) -> Optional[Path]:
+    """
+    Prefer new naming:
+      character-u{codepoint}.svg
+    Fallback to legacy naming:
+      character-{char}.svg
+    Also tries lower/upper variants for convenience.
+    """
+    slug = _cp_slug_for_char(ch)
+    candidates = [
+        src_dir / f"character-{slug}.svg",
+        src_dir / f"character-{slug.upper()}.svg",
+        # legacy
+        src_dir / f"character-{ch}.svg",
+        src_dir / f"character-{ch.lower()}.svg",
+        src_dir / f"character-{ch.upper()}.svg",
+    ]
+    for p in candidates:
+        if p.is_file():
+            return p
+    return None
 
 
 # -------------------- Helpers: SVG parsing / color ----------------------------
@@ -854,10 +885,8 @@ def get_theme_config(theme: str) -> ThemeConfig:
         ))
 
     if theme == "valentines":
-        # Pink/red candy-gloss: bright body, high saturation, sparkly hot-pink glints,
-        # occasional white twinkle but not too much.
         return _cfg_merge(common, dict(
-            base_hue=335/360.0, hue_jitter=0.090,     # magenta->red range
+            base_hue=335/360.0, hue_jitter=0.090,
             body_sat_min=0.78, body_sat_max=1.00,
             body_v_min=0.22, body_v_max=0.98, body_v_gamma=0.95,
             body_sat_mul=1.10,
@@ -865,38 +894,29 @@ def get_theme_config(theme: str) -> ThemeConfig:
             hue_tone_amp=0.012,
             hue_shimmer_amp=0.028,
             val_shimmer_amp=0.045,
-
             spec_edge0=0.50, spec_scale=0.92,
             sheen_mix=0.16, sheen_sat_boost=0.34, sheen_hue_shift=0.010,
-
-            # Make “sparkles” colorful (pink/red) with some white twinkles.
             fire_prob=0.78,
             fire_hues=[350/360.0, 0/360.0, 10/360.0, 330/360.0, 315/360.0, 45/360.0],
             fire_hue_jitter=0.10,
             fire_sat_base_min=0.28, fire_sat_base_max=0.62,
             fire_sat_peak_min=0.80, fire_sat_peak_max=1.00,
-            fire_white_mix_min=0.10, fire_white_mix_max=0.38,
+            fire_white_mix_min=0.10,
+            fire_white_mix_max=0.38,
         ))
 
     if theme == "matrix":
-        # Neon-green-on-black vibe: very dark greens most of the time,
-        # frequent vivid green glints (little-to-no white).
         return _cfg_merge(common, dict(
-            base_hue=120/360.0, hue_jitter=0.040,     # green band
+            base_hue=120/360.0, hue_jitter=0.040,
             body_sat_min=0.85, body_sat_max=1.00,
-            body_v_min=0.03, body_v_max=0.88, body_v_gamma=1.25,  # skew darker
+            body_v_min=0.03, body_v_max=0.88, body_v_gamma=1.25,
             body_sat_mul=1.12,
             sat_dark_boost=0.22,
             hue_tone_amp=0.006,
             hue_shimmer_amp=0.018,
             val_shimmer_amp=0.030,
-
-            # Lower threshold => more “sparkle points”
             spec_edge0=0.44, spec_scale=0.94,
-
-            # Keep highlights neon, not white
             sheen_mix=0.06, sheen_sat_boost=0.40, sheen_hue_shift=-0.010,
-
             fire_prob=0.92,
             fire_hues=[110/360.0, 120/360.0, 130/360.0, 95/360.0, 145/360.0],
             fire_hue_jitter=0.06,
@@ -1052,7 +1072,12 @@ def _timestamped_if_exists(path: Path) -> Path:
 def main() -> None:
     ap = argparse.ArgumentParser(description="Generate a polygon-pulse video from a character SVG or a square-grid logo.")
     g = ap.add_mutually_exclusive_group(required=True)
-    g.add_argument("--char", type=str, default=None, help="Single character: uses src/character-{char}.svg")
+    g.add_argument(
+        "--char",
+        type=str,
+        default=None,
+        help="Single character: uses src/character-u{codepoint}.svg (fallback: src/character-{char}.svg)",
+    )
     g.add_argument(
         "--chars",
         type=str,
@@ -1112,9 +1137,16 @@ def main() -> None:
         ch = args.char
         if len(ch) != 1:
             raise SystemExit("--char must be exactly one character.")
-        in_svg_path = src_dir / f"character-{ch}.svg"
-        if not in_svg_path.is_file():
-            raise SystemExit(f"Input SVG not found: {in_svg_path}")
+
+        in_svg_path = resolve_character_svg(src_dir, ch)
+        if in_svg_path is None:
+            slug = _cp_slug_for_char(ch)
+            raise SystemExit(
+                f"Input SVG not found for {ch!r}. Tried:\n"
+                f"  - {src_dir / f'character-{slug}.svg'}\n"
+                f"  - {src_dir / f'character-{ch}.svg'} (legacy)\n"
+            )
+
         doc = etree.fromstring(in_svg_path.read_bytes(), parser=parser)
         out_file = out_dir / f"character-{ch}.{args.ext.lower()}"
         label = f"character {ch!r}"
@@ -1124,7 +1156,20 @@ def main() -> None:
         grid_n = int(round(math.sqrt(n)))
         if grid_n * grid_n != n or grid_n not in (2, 3, 4):
             raise SystemExit("--chars must be 4, 9, or 16 characters long (ignoring spaces), for 2x2 / 3x3 / 4x4 grids.")
-        char_paths = [src_dir / f"character-{c}.svg" for c in key]
+
+        char_paths: List[Path] = []
+        for c in key:
+            p = resolve_character_svg(src_dir, c)
+            if p is None:
+                slug = _cp_slug_for_char(c)
+                raise SystemExit(
+                    f"Input SVG not found for {c!r} in --chars.\n"
+                    f"Expected one of:\n"
+                    f"  - {src_dir / f'character-{slug}.svg'}\n"
+                    f"  - {src_dir / f'character-{c}.svg'} (legacy)\n"
+                )
+            char_paths.append(p)
+
         doc = build_logo_svg_from_chars_grid(char_paths, grid_n=grid_n, gap_flag=args.gap)
         out_file = out_dir / f"logo-{key}.{args.ext.lower()}"
         label = f"logo {key!r} ({grid_n}x{grid_n}, gap={args.gap})"
