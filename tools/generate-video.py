@@ -94,10 +94,11 @@ except Exception:
     cairosvg = None
 
 try:
-    from PIL import Image, ImageColor  # py -m pip install pillow
+    from PIL import Image, ImageColor, ImageSequence  # py -m pip install pillow
 except Exception:
     Image = None
     ImageColor = None
+    ImageSequence = None
 
 
 SVG_NS = "http://www.w3.org/2000/svg"
@@ -806,16 +807,16 @@ class ThemeConfig:
     fire_white_mix_max: float = 0.72
 
 
-_FIRE_HUES_DEFAULT: List[float] = [
-    200 / 360.0, 220 / 360.0, 255 / 360.0, 300 / 360.0,
-    330 / 360.0, 45 / 360.0, 70 / 360.0, 150 / 360.0,
-]
-
-
 def _cfg_merge(common: Dict, specific: Dict) -> ThemeConfig:
     merged = dict(common)
     merged.update(specific)
     return ThemeConfig(**merged)
+
+
+_FIRE_HUES_DEFAULT: List[float] = [
+    200 / 360.0, 220 / 360.0, 255 / 360.0, 300 / 360.0,
+    330 / 360.0, 45 / 360.0, 70 / 360.0, 150 / 360.0,
+]
 
 
 def get_theme_config(theme: str) -> ThemeConfig:
@@ -1157,7 +1158,7 @@ class Firework:
 # -------------------- Pulse schedules ----------------------------------------
 
 def make_pulses(rng: random.Random, duration: float, theme: str) -> List[Pulse]:
-    if theme in {"deidee", "matrix", "heart", "static", "champagne", "camo", "fireworks"}:
+    if theme in {"deidee", "matrix", "heart", "static", "champagne", "camo", "fireworks", "gif"}:
         return []
 
     if theme != "classic":
@@ -1285,7 +1286,6 @@ def _beat_wave_smooth(t: float) -> float:
         if d >= width:
             return 0.0
         x = d / width
-        # cosine bell (C1 continuous)
         return 0.5 * (1.0 + math.cos(math.pi * x))
 
     b1 = bump(p, 0.16, 0.11)
@@ -1295,16 +1295,12 @@ def _beat_wave_smooth(t: float) -> float:
     raw = 0.04 + 0.50 * b1 + 1.00 * b2 + tail
     raw = _clamp01(raw)
 
-    # extra easing to make growth/decay smoother visually
     eased = _cosine_ease(raw)
-    # blend so it still has "punch", but smoother overall
     pulse = 0.55 * raw + 0.45 * eased
     return _clamp01(pulse)
 
 
 def _heart_icon_val(x: float, y: float) -> float:
-    # Classic implicit heart, slightly tuned (kept compatible with prior look),
-    # BUT overall fitting is now anisotropic to fill the canvas like the reference.
     x = abs(x)
     x *= 1.12
     y *= 1.02
@@ -1314,14 +1310,6 @@ def _heart_icon_val(x: float, y: float) -> float:
 
 
 def _compute_heart_fit(margin: float = 0.004, headroom: float = (1.0 + _HEART_BEAT_AMP)) -> Dict[str, float]:
-    """
-    Compute a tight fit for the implicit heart in normalized space.
-
-    CHANGE (requested):
-    - Fit is now *anisotropic* (separate sx/sy) so the heart silhouette fills the canvas
-      like the reference image, and stretches cleanly to match any output aspect ratio.
-    - Fit accounts for max pulse headroom so it won't clip at peak beat.
-    """
     scan_min = -1.85
     scan_max = 1.85
     steps = 460
@@ -1342,7 +1330,6 @@ def _compute_heart_fit(margin: float = 0.004, headroom: float = (1.0 + _HEART_BE
                 maxy = max(maxy, y)
 
     if not (minx < maxx and miny < maxy):
-        # fallback
         return {"sx": 1.20, "sy": 1.20, "cx": 0.0, "cy": 0.0, "margin": margin, "headroom": headroom}
 
     cx = 0.5 * (minx + maxx)
@@ -1350,10 +1337,7 @@ def _compute_heart_fit(margin: float = 0.004, headroom: float = (1.0 + _HEART_BE
     w = (maxx - minx)
     h = (maxy - miny)
 
-    # Target square in normalized coords is [-1,1] -> size 2.0
-    # Use margin, and also reserve "headroom" for pulse scale so peak doesn't clip.
     target = 2.0 * (1.0 - margin) / max(1e-6, headroom)
-
     sx = target / max(1e-6, w)
     sy = target / max(1e-6, h)
 
@@ -1373,18 +1357,14 @@ def _heart_mask_icon_single(nx: float, ny: float, pulse: float, fit: Dict[str, f
 
     val = _heart_icon_val(x, y)
 
-    edge = 0.026  # slightly crisper than before, AA handles smoothness
+    edge = 0.026
     mask = 1.0 - _smoothstep(-edge, edge, val)
     glow = math.exp(-abs(val) * 9.5)
     return (_clamp01(mask), _clamp01(glow))
 
 
 def _heart_mask_icon_aa(nx: float, ny: float, pulse: float, fit: Dict[str, float]) -> Tuple[float, float]:
-    """
-    Cheap AA for the heart boundary: sample multiple nearby points and average.
-    This makes the growth (scale) feel smoother on a polygon-mosaic surface.
-    """
-    eps = 0.0026  # ~ "subpixel" in normalized coords for 1080p-ish output
+    eps = 0.0026
     samples = [
         (0.0, 0.0),
         (+eps, 0.0),
@@ -1440,6 +1420,9 @@ def main() -> None:
     ap.add_argument("--color", type=str, default="", help="Override base color (CSS color).")
     ap.add_argument("--bgcolor", type=str, default="", help="Override background color (CSS color).")
 
+    ap.add_argument("--gif", type=str, default="",
+                    help="Use a GIF (or image) from the data/ folder as a theme source (colors + animation).")
+
     ap.add_argument(
         "--theme",
         type=str,
@@ -1481,11 +1464,15 @@ def main() -> None:
     ap.add_argument("--keep-frames", action="store_true", help="Keep rendered PNG frames (for debugging).")
     args = ap.parse_args()
 
+    use_gif_theme = bool((args.gif or "").strip())
     cfg = get_theme_config(args.theme)
+    if use_gif_theme:
+        cfg = ThemeConfig(kind="gif")
 
     root = Path(__file__).resolve().parent.parent
     src_dir = root / "src"
     out_dir = root / "dist" / "videos"
+    data_dir = root / "data"
 
     prefix = "inverse" if args.inverse else "character"
     parser = etree.XMLParser(remove_blank_text=False, recover=True, remove_comments=False)
@@ -1599,7 +1586,8 @@ def main() -> None:
         except Exception:
             base_rgbs.append((0, 0, 0))
 
-    pulses_per_poly: List[List[Pulse]] = [make_pulses(rng, float(args.duration), args.theme) for _ in polys]
+    pulses_theme_name = "gif" if use_gif_theme else args.theme
+    pulses_per_poly: List[List[Pulse]] = [make_pulses(rng, float(args.duration), pulses_theme_name) for _ in polys]
 
     # Output sizing
     max_dim = int(args.max_dim)
@@ -1712,7 +1700,7 @@ def main() -> None:
             st = (poly.get("style") or "").strip()
             poly.set("style", _style_set(st, "fill-opacity", f"{de_alpha:.3f}"))
 
-    # heart (UPDATED FIT)
+    # heart
     heart_fit: Optional[Dict[str, float]] = None
     heart_hj: List[float] = []
     heart_sj: List[float] = []
@@ -1755,7 +1743,7 @@ def main() -> None:
                 flicker_phase=rng.uniform(0.0, 1.0),
             ))
 
-    # champagne (unchanged)
+    # champagne
     bubbles: List[Bubble] = []
     ch_freq: List[float] = []
     ch_phase: List[float] = []
@@ -1779,7 +1767,7 @@ def main() -> None:
             ch_freq.append(rng.uniform(0.05, 0.22))
             ch_phase.append(rng.uniform(0.0, 1.0))
 
-    # camo (Scorpion W2) precompute
+    # camo
     camo_seed = float(args.seed if args.seed is not None else rng.randint(0, 10_000_000))
     camo_offx: List[float] = []
     camo_offy: List[float] = []
@@ -1790,7 +1778,7 @@ def main() -> None:
             camo_offy.append(rng.uniform(0.0, 1000.0))
             camo_phase.append(rng.uniform(0.0, 1.0))
 
-    # fireworks precompute
+    # fireworks
     fireworks: List[Firework] = []
     if cfg.kind == "fireworks":
         dur = float(args.duration)
@@ -1818,7 +1806,7 @@ def main() -> None:
 
             trail_len = rng.uniform(0.20, 0.40)
             trail_w = rng.uniform(0.010, 0.030)
-            trail_h = rng.uniform(18/360.0, 55/360.0)  # warm “fire arrow” trail
+            trail_h = rng.uniform(18/360.0, 55/360.0)
 
             fireworks.append(Firework(
                 x=x, yb=yb,
@@ -1830,22 +1818,108 @@ def main() -> None:
                 trail_len=trail_len, trail_w=trail_w, trail_h=trail_h,
             ))
 
+    # gif theme source
+    gif_frames_rgb: List[bytes] = []
+    gif_w = gif_h = 0
+    gif_cum: List[float] = []
+    gif_total = 0.0
+    if cfg.kind == "gif":
+        if Image is None or ImageSequence is None:
+            raise RuntimeError("GIF theme requires Pillow. Install with: py -m pip install pillow")
+
+        gif_name = (args.gif or "").strip()
+        gif_path = (data_dir / gif_name).resolve()
+        if not gif_path.is_file():
+            raise SystemExit(f"--gif file not found in data/: {gif_path}")
+
+        im = Image.open(str(gif_path))
+        # background used to composite transparency (only for sampling)
+        bg_rgb_for_gif = _parse_css_color_to_rgb(bgcolor) if bgcolor else (0, 0, 0)
+
+        durations: List[float] = []
+        frames_rgba: List[Image.Image] = []
+
+        # Read frames + durations
+        n_frames = int(getattr(im, "n_frames", 1) or 1)
+        for fi in range(n_frames):
+            try:
+                im.seek(fi)
+            except Exception:
+                break
+            dur_ms = im.info.get("duration", 100)
+            try:
+                dur_ms = float(dur_ms)
+            except Exception:
+                dur_ms = 100.0
+            durations.append(max(1.0, dur_ms) / 1000.0)
+
+            fr = im.convert("RGBA")
+
+            if hasattr(Image, "Resampling"):
+                resample = Image.Resampling.BILINEAR
+            else:
+                resample = Image.BILINEAR
+
+            # Make the source match the output canvas exactly
+            if fr.size != (out_w, out_h):
+                fr = fr.resize((out_w, out_h), resample=resample)
+
+            # Composite transparency (if any) onto a solid bg for stable sampling
+            bg = Image.new("RGBA", fr.size, (bg_rgb_for_gif[0], bg_rgb_for_gif[1], bg_rgb_for_gif[2], 255))
+            fr = Image.alpha_composite(bg, fr)
+
+            frames_rgba.append(fr)
+
+        if not frames_rgba:
+            raise SystemExit(f"--gif could not be decoded into frames: {gif_path}")
+
+        gif_w, gif_h = frames_rgba[0].size
+
+        # Convert to RGB bytes for fast sampling
+        for fr in frames_rgba:
+            rgb_im = fr.convert("RGB")
+            gif_frames_rgb.append(rgb_im.tobytes())
+
+        # Build cumulative timeline (looped)
+        gif_total = float(sum(durations)) if durations else 1.0
+        if gif_total <= 1e-9:
+            gif_total = 1.0
+        acc = 0.0
+        for d in durations:
+            acc += d
+            gif_cum.append(acc)
+        if not gif_cum:
+            gif_cum = [gif_total]
+
+        def _gif_frame_index_at_time(tsec: float) -> int:
+            if len(gif_frames_rgb) == 1:
+                return 0
+            pos = tsec % gif_total
+            for j, c in enumerate(gif_cum):
+                if pos < c:
+                    return j
+            return len(gif_frames_rgb) - 1
+
+        def _gif_sample_rgb(frame_bytes: bytes, nx: float, ny: float) -> Tuple[int, int, int]:
+            x = int(round(_clamp01(nx) * (gif_w - 1)))
+            y = int(round(_clamp01(ny) * (gif_h - 1)))
+            off = (y * gif_w + x) * 3
+            return (frame_bytes[off], frame_bytes[off + 1], frame_bytes[off + 2])
+
     # ---------------- Render frames ----------------
     tmp_root = Path(tempfile.mkdtemp(prefix="mmxx_video_"))
     frames_dir = tmp_root / "frames"
     frames_dir.mkdir(parents=True, exist_ok=True)
 
-    # Scorpion W2 / OCP-like palette (approx, tuned to “feel right” in motion)
     CAMO_PAL: List[Tuple[int, int, int]] = [
-        _parse_css_color_to_rgb("#1b2116"),  # near-black green
-        _parse_css_color_to_rgb("#2f3b2a"),  # dark green
-        _parse_css_color_to_rgb("#4b5636"),  # olive
-        _parse_css_color_to_rgb("#6b6a45"),  # khaki green
-        _parse_css_color_to_rgb("#8a7751"),  # tan
-        _parse_css_color_to_rgb("#b2a378"),  # light tan
-        _parse_css_color_to_rgb("#3c2f20"),  # dark brown
+        _parse_css_color_to_rgb("#1b2116"),
+        _parse_css_color_to_rgb("#2f3b2a"),
+        _parse_css_color_to_rgb("#4b5636"),
+        _parse_css_color_to_rgb("#6b6a45"),
+        _parse_css_color_to_rgb("#8a7751"),
+        _parse_css_color_to_rgb("#b2a378"),
+        _parse_css_color_to_rgb("#3c2f20"),
     ]
-    # Sorted from darkest-ish to lightest-ish already; we’ll index by thresholds.
 
     try:
         renderer_used = None
@@ -2098,16 +2172,13 @@ def main() -> None:
                     poly.set("fill", _rgb_to_hex(rgb))
 
             elif cfg.kind == "camo":
-                # Scorpion W2-ish: macro blobs + micro grain + gentle drift.
                 for idx, poly in enumerate(polys):
                     nx = poly_nx[idx]
                     ny = poly_ny[idx]
 
-                    # subtle drift so it feels like “fabric” moving
                     drift_x = 0.020 * math.sin(2.0 * math.pi * (0.035 * t + camo_phase[idx]))
                     drift_y = 0.018 * math.cos(2.0 * math.pi * (0.030 * t + camo_phase[idx] * 0.7))
 
-                    # coordinate space (macro + micro)
                     x = (nx * 3.2 + drift_x) + camo_offx[idx] * 0.001
                     y = (ny * 3.2 + drift_y) + camo_offy[idx] * 0.001
 
@@ -2117,12 +2188,10 @@ def main() -> None:
 
                     n = _clamp01(0.62 * macro + 0.28 * mid + 0.10 * micro)
 
-                    # “fabric” shading (very subtle)
                     shade = 0.90 + 0.10 * math.sin(2.0 * math.pi * (0.045 * t + nx * 2.1 + ny * 1.6))
                     shade *= 0.94 + 0.06 * (0.5 + 0.5 * math.sin(2.0 * math.pi * (0.11 * t + camo_phase[idx])))
                     shade = _clamp01(shade)
 
-                    # thresholds across palette; blend in a small band for organic edges
                     th = [0.12, 0.24, 0.40, 0.56, 0.72, 0.86]
                     bw = 0.045
 
@@ -2131,45 +2200,36 @@ def main() -> None:
                             return CAMO_PAL[0]
                         if nv >= th[-1]:
                             return CAMO_PAL[-1]
-                        # find interval
                         k = 0
                         while k < len(th) and nv > th[k]:
                             k += 1
-                        # palette index mapping (7 colors)
-                        # interval k means between palette k and k+1-ish, but keep ends stable
                         a = max(0, min(len(CAMO_PAL) - 2, k))
                         b = a + 1
                         edge0 = th[a] if a < len(th) else th[-1]
                         edge1 = th[b] if b < len(th) else th[-1]
-                        # broaden blend a bit
                         t0 = _smoothstep(edge0 - bw, edge0 + bw, nv)
                         t1 = _smoothstep(edge1 - bw, edge1 + bw, nv)
-                        # blend around the local boundary; if we're mid-interval use t1, else t0
                         tt = _clamp01((t0 + t1) * 0.5)
                         return _mix_rgb(CAMO_PAL[a], CAMO_PAL[b], tt)
 
                     rgb = pick(n)
 
-                    # add a tiny high-frequency grain so polygons don’t look too flat
                     g = _noise2(nx * 120.0 + t * 0.35, ny * 120.0 + t * 0.27, camo_seed + 99.1)
-                    grain = (g - 0.5) * 0.10  # +/- 0.05
+                    grain = (g - 0.5) * 0.10
                     rgb = (
                         max(0, min(255, int(round(rgb[0] * (shade + grain))))),
                         max(0, min(255, int(round(rgb[1] * (shade + grain))))),
                         max(0, min(255, int(round(rgb[2] * (shade + grain))))),
                     )
 
-                    # very mild ambient lift (keep matte)
                     rgb = mix_to_white(rgb, amb * 0.04)
                     poly.set("fill", _rgb_to_hex(rgb))
 
             elif cfg.kind == "fireworks":
-                # Dark sky base + repeated “fire arrow” launches + bursts.
                 for idx, poly in enumerate(polys):
                     nx = poly_nx[idx]
                     ny = poly_ny[idx]
 
-                    # sky gradient (darker at bottom, slightly brighter toward top)
                     sky_h = 215/360.0 + 0.010 * math.sin(2.0 * math.pi * (0.02 * t + nx * 0.6))
                     sky_s = 0.55
                     sky_v = 0.03 + 0.10 * (1.0 - _smoothstep(0.10, 1.00, ny))**1.4
@@ -2178,40 +2238,34 @@ def main() -> None:
                     rgb = _hsv01_to_rgb255(sky_h, sky_s, sky_v)
 
                     for fw in fireworks:
-                        # rocket phase
                         if fw.t_launch <= t < fw.t_burst:
                             u = (t - fw.t_launch) / max(1e-6, (fw.t_burst - fw.t_launch))
                             u = _clamp01(u)
 
-                            # ease upward motion slightly
                             uu = _cosine_ease(u)
                             y0 = 1.05
                             y = y0 + (fw.yb - y0) * uu
 
                             dx = abs(nx - fw.x)
-                            dy = ny - y  # positive below the head
+                            dy = ny - y
 
-                            # trail behind head
                             if dy >= 0.0 and dy <= fw.trail_len:
                                 trail_core = math.exp(-(dx * dx) / (2.0 * fw.trail_w * fw.trail_w))
                                 trail_len_gate = math.exp(-(dy * dy) / (2.0 * (fw.trail_len * 0.55) ** 2))
                                 trail = trail_core * trail_len_gate
                                 trail = _clamp01(trail)
 
-                                # warm “fire arrow” gradient (hotter near head)
                                 hot = _clamp01(1.0 - dy / max(1e-6, fw.trail_len))
                                 th = (fw.trail_h + 0.02 * math.sin(2.0 * math.pi * (0.20 * t + fw.glitter_p))) % 1.0
                                 ts = 0.85
                                 tv = 0.35 + 0.65 * hot
                                 trail_rgb = _hsv01_to_rgb255(th, ts, tv)
 
-                                # occasional bright spark points along the trail
                                 spark = _smoothstep(0.70, 1.00, hot) * (0.65 + 0.35 * math.sin(2.0 * math.pi * (fw.glitter_f * t + fw.glitter_p + dy * 3.0)))
                                 trail_rgb = _mix_rgb(trail_rgb, (255, 255, 255), 0.20 * _clamp01(spark))
 
                                 rgb = _add_rgb(rgb, trail_rgb, 0.90 * trail)
 
-                            # head glow
                             head_r = 0.020
                             d2 = (nx - fw.x) ** 2 + (ny - y) ** 2
                             head = math.exp(-d2 / (2.0 * head_r * head_r))
@@ -2219,11 +2273,9 @@ def main() -> None:
                                 head_rgb = _hsv01_to_rgb255((fw.trail_h + 0.01) % 1.0, 0.30, 1.0)
                                 rgb = _add_rgb(rgb, head_rgb, 0.95 * _clamp01(head))
 
-                        # burst phase
                         if t >= fw.t_burst:
                             dt = t - fw.t_burst
                             if dt <= 4.0:
-                                # expanding ring
                                 cx = fw.x
                                 cy = fw.yb
                                 dx = nx - cx
@@ -2237,22 +2289,17 @@ def main() -> None:
 
                                 if ring > 1e-5:
                                     ang = math.atan2(dy, dx)
-
-                                    # spokes (spark “arrows”)
                                     sp = abs(math.sin(fw.spoke_n * ang + fw.spoke_phase))
                                     sp = sp ** 2.2
                                     spoke_gate = 0.35 + 0.65 * sp
 
-                                    # flicker
                                     flick = 0.70 + 0.30 * math.sin(2.0 * math.pi * (fw.glitter_f * t + fw.glitter_p + (ang * 0.07)))
                                     flick = _clamp01(flick)
 
                                     inten = ring * spoke_gate * flick
 
-                                    # alternate hues per spoke for more “firework” variety
                                     sel = 0.5 + 0.5 * math.sin(fw.spoke_n * ang + fw.spoke_phase)
                                     h = fw.hue_a if sel >= 0.0 else fw.hue_b
-                                    # hotter/whiter near the origin early
                                     core = math.exp(-(d*d) / (2.0 * (0.06 + 0.03 * dt) ** 2))
                                     core = _clamp01(core)
 
@@ -2261,16 +2308,13 @@ def main() -> None:
                                     burst_rgb = _hsv01_to_rgb255(h, s, v)
 
                                     burst_rgb = _mix_rgb(burst_rgb, (255, 255, 255), 0.25 * _clamp01(inten + 0.6 * core))
-
                                     rgb = _add_rgb(rgb, burst_rgb, 0.95 * inten)
 
-                                    # lingering ember haze
                                     haze = _clamp01(0.22 * ring * (0.5 + 0.5 * math.sin(2.0 * math.pi * (0.45 * t + fw.glitter_p))))
                                     if haze > 1e-5:
                                         ember = _hsv01_to_rgb255((h + 0.02) % 1.0, 0.55, 0.60)
                                         rgb = _add_rgb(rgb, ember, haze)
 
-                    # tiny ambient so sky isn’t crushed
                     rgb = mix_to_white(rgb, amb * 0.05)
                     poly.set("fill", _rgb_to_hex(rgb))
 
@@ -2278,17 +2322,14 @@ def main() -> None:
                 pulse = _beat_wave_smooth(t)
                 assert heart_fit is not None
 
-                # Valentines-like palette bias (pinks/reds) + a little golden sparkle.
                 base_h = (override_hsv[0] if override_hsv is not None else (335 / 360.0))
 
                 for idx, poly in enumerate(polys):
                     nx = poly_nx[idx]
                     ny = poly_ny[idx]
 
-                    # AA mask for smoother growth/edges on mosaic polygons
                     mask, glow = _heart_mask_icon_aa(nx, ny, pulse, heart_fit)
 
-                    # Background: deep plum/charcoal with a soft vignette (so heart pops)
                     bg_h = (300/360.0) + 0.010 * math.sin(2.0 * math.pi * (0.03 * t + nx * 0.7))
                     bg_s = 0.35
                     vign = math.sqrt((nx - 0.5) ** 2 + (ny - 0.5) ** 2)
@@ -2297,18 +2338,15 @@ def main() -> None:
                     bg_v = _clamp01(bg_v)
                     bg_rgb = _hsv01_to_rgb255(bg_h, bg_s, bg_v)
 
-                    # Heart base hue: valentines-ish sweep with jitter
                     h = (base_h
                          + 0.090 * (nx - 0.5)
                          + 0.040 * math.sin(2.0 * math.pi * (0.09 * t + ny * 0.9))
                          + heart_hj[idx]) % 1.0
 
-                    # Saturation: generally high like valentines, but with random breathing so it doesn't feel flat
                     sat_breathe = 0.85 + 0.30 * (0.5 + 0.5 * math.sin(2.0 * math.pi * (0.12 * t + heart_tw_p[idx])))
                     s = (0.72 + 0.30 * mask + 0.22 * glow) * heart_sj[idx] * sat_breathe
                     s = _clamp01(s)
 
-                    # Value: brighter "whitespace" inside heart, especially during the beat; keep edges very bright
                     v = 0.18 + 0.46 * mask
                     v += 0.34 * mask * (0.18 + 0.82 * pulse)
                     v += 0.22 * glow * (0.30 + 0.70 * pulse)
@@ -2317,29 +2355,32 @@ def main() -> None:
                     heart_rgb = _hsv01_to_rgb255(h, s, v)
                     rgb = _mix_rgb(bg_rgb, heart_rgb, mask)
 
-                    # Edge + internal sheen: pink-white + occasional warm sparkle (valentines vibe)
                     edge = _clamp01(glow * (0.22 + 0.40 * pulse))
                     rgb = _mix_rgb(rgb, (255, 255, 255), 0.40 * edge)
 
-                    # Add a tinted "fire" sparkle hue on strong edge glow (like valentines dispersion)
                     fire_gate = _smoothstep(0.35, 0.92, edge)
                     if fire_gate > 0.0:
                         fh = (heart_fire_h[idx] + 0.02 * math.sin(2.0 * math.pi * (0.06 * t + nx))) % 1.0
                         fire_rgb = _hsv01_to_rgb255(fh, _clamp01(0.65 + 0.35 * s), 1.0)
                         rgb = _mix_rgb(rgb, fire_rgb, 0.18 * fire_gate)
 
-                    # Twinkles (more valentine-like: whiter heads + colored flare)
                     tw = facet_shimmer(t, heart_tw_f[idx], heart_tw_p[idx])
                     tw = (mask ** 1.55) * (tw ** 1.30)
                     sparkle = _clamp01(tw * (0.06 + 0.22 * pulse) + (mask ** 2.2) * (0.02 + 0.06 * pulse))
                     if sparkle > 0.0:
                         rgb = _mix_rgb(rgb, (255, 255, 255), sparkle)
-                        # subtle colored rim on sparkles
                         fh2 = (heart_fire_h[idx] + 0.015 * math.sin(2.0 * math.pi * (0.08 * t + ny))) % 1.0
                         flare = _hsv01_to_rgb255(fh2, 0.85, 1.0)
                         rgb = _mix_rgb(rgb, flare, 0.10 * sparkle)
 
                     rgb = mix_to_white(rgb, amb * 0.10)
+                    poly.set("fill", _rgb_to_hex(rgb))
+
+            elif cfg.kind == "gif":
+                fi = _gif_frame_index_at_time(t)  # type: ignore[name-defined]
+                fb = gif_frames_rgb[fi]
+                for idx, poly in enumerate(polys):
+                    rgb = _gif_sample_rgb(fb, poly_nx[idx], poly_ny[idx])  # type: ignore[name-defined]
                     poly.set("fill", _rgb_to_hex(rgb))
 
             else:
@@ -2354,7 +2395,7 @@ def main() -> None:
         encode_video_ffmpeg(frames_dir, fps, out_file, args.ext)
 
         print(f"Output: {out_file}")
-        print(f"Theme:  {args.theme}")
+        print(f"Theme:  {'gif:' + (args.gif.strip() or '') if cfg.kind == 'gif' else args.theme}")
         print(f"Input:  {label}")
         print(f"Frames: {frames} @ {fps}fps, size={out_w}x{out_h}, renderer={renderer_used}")
 
