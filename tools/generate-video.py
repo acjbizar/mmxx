@@ -50,6 +50,8 @@ Themes:
 - heart: pulsating graphical heart (silhouette) with valentine-like palette + smoother pulse growth
 - static: TV-like noise/static (mostly greys with rare color specks)
 - champagne: sparkly-wine bubbles rising upward (warm liquid + bright bubble trails)
+- camo: Scorpion W2-inspired procedural camouflage (earthy blobs, matte fabric shading)
+- fireworks: exploding fire-arrows (rocket trails + radial arrow streaks + bright hot heads)
 
 Output:
   dist/videos/{prefix}-{token}.{ext} (for --char)
@@ -846,6 +848,26 @@ def get_theme_config(theme: str) -> ThemeConfig:
     if theme == "matrix":
         return ThemeConfig(kind="matrix")
 
+    if theme == "camo":
+        # Matte, low-glint fabric-ish camo
+        return ThemeConfig(
+            kind="camo",
+            amb_base=0.015, amb_amp=0.020, amb_freq=0.030,
+            spec_edge0=0.72, spec_scale=0.20,
+            sheen_mix=0.00,
+            fire_prob=0.0,
+        )
+
+    if theme == "fireworks":
+        # Dark base + bright additive bursts (handled in custom branch)
+        return ThemeConfig(
+            kind="fireworks",
+            amb_base=0.010, amb_amp=0.012, amb_freq=0.040,
+            spec_edge0=0.62, spec_scale=0.35,
+            sheen_mix=0.00,
+            fire_prob=0.0,
+        )
+
     common = dict(
         kind="hsv",
         amb_base=0.06,
@@ -1029,7 +1051,8 @@ def get_theme_config(theme: str) -> ThemeConfig:
             fire_hue_jitter=0.10,
             fire_sat_base_min=0.25, fire_sat_base_max=0.55,
             fire_sat_peak_min=0.75, fire_sat_peak_max=1.00,
-            fire_white_mix_min=0.12, fire_white_mix_max=0.35,
+            fire_white_mix_min=0.12,
+            fire_white_mix_max=0.35,
         ))
 
     if theme == "valentines":
@@ -1113,10 +1136,34 @@ class Bubble:
     strength: float
 
 
+@dataclass(frozen=True)
+class FireRay:
+    dx: float
+    dy: float
+    speed: float
+    width: float
+    hue_off: float
+    phase: float
+
+
+@dataclass(frozen=True)
+class Firework:
+    t0: float
+    x0: float
+    y0: float
+    x1: float
+    y1: float
+    t_up: float
+    t_burst: float
+    hue: float
+    rays: Tuple[FireRay, ...]
+    sparkle_phase: float
+
+
 # -------------------- Pulse schedules ----------------------------------------
 
 def make_pulses(rng: random.Random, duration: float, theme: str) -> List[Pulse]:
-    if theme in {"deidee", "matrix", "heart", "static", "champagne"}:
+    if theme in {"deidee", "matrix", "heart", "static", "champagne", "camo", "fireworks"}:
         return []
 
     if theme != "classic":
@@ -1189,6 +1236,85 @@ def _hash01(x: float) -> float:
     return _fract(math.sin(x) * 43758.5453123)
 
 
+# -------------------- Coherent noise (for camo) -----------------------------
+
+def _lerp(a: float, b: float, t: float) -> float:
+    return a + (b - a) * t
+
+
+def _value_noise2(x: float, y: float, seed: float) -> float:
+    """
+    Smooth value noise in 2D (0..1), deterministic from seed.
+    """
+    xi = math.floor(x)
+    yi = math.floor(y)
+    xf = x - xi
+    yf = y - yi
+
+    def h(ix: float, iy: float) -> float:
+        return _hash01(seed + ix * 127.1 + iy * 311.7)
+
+    v00 = h(xi, yi)
+    v10 = h(xi + 1.0, yi)
+    v01 = h(xi, yi + 1.0)
+    v11 = h(xi + 1.0, yi + 1.0)
+
+    u = xf * xf * (3.0 - 2.0 * xf)
+    v = yf * yf * (3.0 - 2.0 * yf)
+
+    a = _lerp(v00, v10, u)
+    b = _lerp(v01, v11, u)
+    return _clamp01(_lerp(a, b, v))
+
+
+def _fbm2(x: float, y: float, seed: float, octaves: int = 4, lacunarity: float = 2.0, gain: float = 0.5) -> float:
+    """
+    Fractal Brownian Motion from value noise (0..1-ish).
+    """
+    amp = 1.0
+    freq = 1.0
+    s = 0.0
+    w = 0.0
+    for k in range(max(1, int(octaves))):
+        n = _value_noise2(x * freq, y * freq, seed + 19.17 * k)
+        s += amp * n
+        w += amp
+        amp *= gain
+        freq *= lacunarity
+    return _clamp01(s / max(1e-9, w))
+
+
+def _mul_rgb(rgb: Tuple[int, int, int], m: float) -> Tuple[int, int, int]:
+    r, g, b = rgb
+    return (
+        max(0, min(255, int(round(r * m)))),
+        max(0, min(255, int(round(g * m)))),
+        max(0, min(255, int(round(b * m)))),
+    )
+
+
+def _shift_palette_hue(palette: List[Tuple[int, int, int]], target_h: float) -> List[Tuple[int, int, int]]:
+    """
+    Shift the palette so its average hue roughly aligns to target_h.
+    Respects low-sat colors by excluding them from the mean.
+    """
+    hsvs: List[Tuple[float, float, float]] = []
+    hs: List[float] = []
+    for rgb in palette:
+        h, s, v = _rgb255_to_hsv01(rgb)
+        hsvs.append((h, s, v))
+        if s > 0.12:
+            hs.append(h)
+    if not hs:
+        return palette[:]
+    ref_h = sum(hs) / float(len(hs))
+    dh = (target_h - ref_h)
+    out: List[Tuple[int, int, int]] = []
+    for (h, s, v) in hsvs:
+        out.append(_hsv01_to_rgb255((h + dh) % 1.0, s, v))
+    return out
+
+
 # -------------------- Heart silhouette + pulse -------------------------------
 
 def _beat_wave_smooth(t: float) -> float:
@@ -1205,7 +1331,6 @@ def _beat_wave_smooth(t: float) -> float:
         if d >= width:
             return 0.0
         x = d / width
-        # cosine bell (C1 continuous)
         return 0.5 * (1.0 + math.cos(math.pi * x))
 
     b1 = bump(p, 0.16, 0.11)
@@ -1215,9 +1340,7 @@ def _beat_wave_smooth(t: float) -> float:
     raw = 0.04 + 0.50 * b1 + 1.00 * b2 + tail
     raw = _clamp01(raw)
 
-    # extra easing to make growth/decay smoother visually
     eased = _cosine_ease(raw)
-    # blend so it still has "punch", but smoother overall
     pulse = 0.55 * raw + 0.45 * eased
     return _clamp01(pulse)
 
@@ -1288,7 +1411,7 @@ def _heart_mask_icon_aa(nx: float, ny: float, pulse: float, fit: Dict[str, float
     Cheap AA for the heart boundary: sample multiple nearby points and average.
     This makes the growth (scale) feel smoother on a polygon-mosaic surface.
     """
-    eps = 0.0026  # ~ "subpixel" in normalized coords for 1080p-ish output
+    eps = 0.0026
     samples = [
         (0.0, 0.0),
         (+eps, 0.0),
@@ -1320,6 +1443,133 @@ def _bubble_influence(nx: float, ny: float, bx: float, by: float, r: float) -> f
     d2 = dx * dx + dy * dy
     rr = max(1e-6, r * r)
     return math.exp(-d2 / (2.2 * rr))
+
+
+# -------------------- Fireworks helpers --------------------------------------
+
+def _dist2_point_to_segment(px: float, py: float, ax: float, ay: float, bx: float, by: float) -> Tuple[float, float]:
+    """
+    Return (squared distance, u) where u is the closest-point parameter on AB in [0,1].
+    """
+    abx = bx - ax
+    aby = by - ay
+    apx = px - ax
+    apy = py - ay
+    d = abx * abx + aby * aby
+    if d <= 1e-12:
+        return (apx * apx + apy * apy, 0.0)
+    u = (apx * abx + apy * aby) / d
+    u = _clamp01(u)
+    cx = ax + u * abx
+    cy = ay + u * aby
+    dx = px - cx
+    dy = py - cy
+    return (dx * dx + dy * dy, u)
+
+
+def _firework_additive_rgb(nx: float, ny: float, t: float, fw: Firework) -> Tuple[float, float, float]:
+    """
+    Additive RGB (float) for a single firework at time t, at normalized position nx/ny.
+    """
+    dt0 = t - fw.t0
+    r_acc = g_acc = b_acc = 0.0
+
+    # rocket phase
+    if 0.0 <= dt0 <= fw.t_up:
+        u = dt0 / max(1e-6, fw.t_up)
+        u2 = 0.25 * u + 0.75 * _cosine_ease(u)
+        hx = _lerp(fw.x0, fw.x1, u2)
+        hy = _lerp(fw.y0, fw.y1, u2)
+
+        dx = fw.x1 - fw.x0
+        dy = fw.y1 - fw.y0
+        L = math.hypot(dx, dy)
+        if L <= 1e-9:
+            L = 1.0
+        ux = dx / L
+        uy = dy / L
+
+        trail_len = 0.26
+        tx = hx - ux * trail_len
+        ty = hy - uy * trail_len
+
+        d2, uu = _dist2_point_to_segment(nx, ny, tx, ty, hx, hy)
+        sigma = 0.010
+        trail = math.exp(-d2 / (2.0 * sigma * sigma)) * (0.15 + 0.85 * uu)
+
+        hd2 = (nx - hx) ** 2 + (ny - hy) ** 2
+        head = math.exp(-hd2 / (2.0 * (sigma * 1.75) ** 2))
+
+        inten = _clamp01(0.85 * trail + 1.30 * head)
+        inten *= (0.65 + 0.35 * math.sin(2.0 * math.pi * (6.0 * dt0 + fw.sparkle_phase)))
+
+        fire_rgb = _hsv01_to_rgb255((fw.hue + 0.02) % 1.0, 0.95, 1.0)
+        mixw = _clamp01(0.55 * head + 0.25 * trail)
+        hot = _mix_rgb(fire_rgb, (255, 255, 255), mixw)
+
+        r_acc += inten * hot[0]
+        g_acc += inten * hot[1]
+        b_acc += inten * hot[2]
+
+    # burst phase
+    te = fw.t0 + fw.t_up
+    dt = t - te
+    if 0.0 <= dt <= fw.t_burst:
+        fade = 1.0 - _smoothstep(0.0, fw.t_burst, dt)
+        cx, cy = fw.x1, fw.y1
+        rx = nx - cx
+        ry = ny - cy
+
+        core_r = 0.065 + 0.070 * (dt / max(1e-6, fw.t_burst))
+        glow = math.exp(-(rx * rx + ry * ry) / (2.0 * core_r * core_r))
+        core = fade * 0.42 * glow
+        core_rgb = _hsv01_to_rgb255(fw.hue, 0.35, 1.0)
+        r_acc += core * core_rgb[0]
+        g_acc += core * core_rgb[1]
+        b_acc += core * core_rgb[2]
+
+        for ray in fw.rays:
+            length = ray.speed * dt
+            if length <= 1e-6:
+                continue
+
+            proj = rx * ray.dx + ry * ray.dy
+            if proj <= 0.0:
+                continue
+
+            px = rx - proj * ray.dx
+            py = ry - proj * ray.dy
+            perp2 = px * px + py * py
+
+            sigma = ray.width
+            if proj <= length:
+                body = math.exp(-perp2 / (2.0 * sigma * sigma))
+                taper = 0.25 + 0.75 * (1.0 - (proj / max(1e-6, length)))
+                body *= taper
+            else:
+                body = 0.0
+
+            d_tip = proj - length
+            head = (
+                math.exp(-perp2 / (2.0 * (sigma * 1.9) ** 2))
+                * math.exp(-(d_tip * d_tip) / (2.0 * (sigma * 2.8) ** 2))
+            )
+
+            flick = 0.70 + 0.30 * math.sin(2.0 * math.pi * (7.0 * dt + ray.phase + 0.35 * proj))
+
+            inten = fade * (0.70 * body + 1.35 * head) * flick
+            if inten <= 1e-6:
+                continue
+
+            h = (fw.hue + ray.hue_off) % 1.0
+            c = _hsv01_to_rgb255(h, 0.95, 1.0)
+            hot = _mix_rgb(c, (255, 255, 255), _clamp01(0.70 * head))
+
+            r_acc += inten * hot[0]
+            g_acc += inten * hot[1]
+            b_acc += inten * hot[2]
+
+    return (r_acc, g_acc, b_acc)
 
 
 # -------------------- MAIN ----------------------------------------------------
@@ -1362,6 +1612,8 @@ def main() -> None:
             "heart",
             "static",
             "champagne",
+            "camo",
+            "fireworks",
         ],
         help="Animation theme.",
     )
@@ -1623,7 +1875,7 @@ def main() -> None:
     heart_fire_h: List[float] = []
     if cfg.kind == "heart":
         heart_fit = _compute_heart_fit(margin=0.02)
-        fire_hues = [350/360.0, 0/360.0, 10/360.0, 330/360.0, 315/360.0, 45/360.0]  # valentines-like
+        fire_hues = [350/360.0, 0/360.0, 10/360.0, 330/360.0, 315/360.0, 45/360.0]
         for _ in polys:
             heart_hj.append(rng.uniform(-0.030, 0.030))
             heart_sj.append(rng.uniform(0.92, 1.22))
@@ -1657,7 +1909,7 @@ def main() -> None:
                 flicker_phase=rng.uniform(0.0, 1.0),
             ))
 
-    # champagne (unchanged)
+    # champagne
     bubbles: List[Bubble] = []
     ch_freq: List[float] = []
     ch_phase: List[float] = []
@@ -1680,6 +1932,94 @@ def main() -> None:
         for _ in polys:
             ch_freq.append(rng.uniform(0.05, 0.22))
             ch_phase.append(rng.uniform(0.0, 1.0))
+
+    # camo (Scorpion W2-inspired procedural)
+    camo_base_rgb: List[Tuple[int, int, int]] = []
+    camo_freq: List[float] = []
+    camo_phase: List[float] = []
+    camo_seedf = float(args.seed if args.seed is not None else rng.randint(0, 10_000_000))
+    if cfg.kind == "camo":
+        palette = [
+            (216, 202, 171),  # light sand
+            (190, 170, 128),  # sand
+            (118,  92,  60),  # brown
+            ( 92, 104,  70),  # olive
+            ( 54,  67,  43),  # dark green
+            ( 74,  57,  39),  # dark brown
+        ]
+        if override_hsv is not None:
+            palette = _shift_palette_hue(palette, override_hsv[0])
+
+        for idx in range(len(polys)):
+            nx = poly_nx[idx]
+            ny = poly_ny[idx]
+            gx = glyph_nx[idx]
+            gy = glyph_ny[idx]
+
+            n_base = _fbm2(nx * 2.35, ny * 2.35, camo_seedf + 11.0, octaves=4)
+            n_blob = _fbm2(nx * 6.80 + 3.0, ny * 6.80 + 7.0, camo_seedf + 23.0, octaves=3)
+            n_det = _fbm2(gx * 18.0 + 9.0, gy * 18.0 + 5.0, camo_seedf + 41.0, octaves=2)
+            n_micro = _fbm2(gx * 40.0 + 19.0, gy * 40.0 + 23.0, camo_seedf + 59.0, octaves=1)
+
+            rgb = palette[1]
+            rgb = _mix_rgb(rgb, palette[0], _smoothstep(0.18, 0.58, n_base))
+            rgb = _mix_rgb(rgb, palette[3], _smoothstep(0.42, 0.78, n_blob))
+            rgb = _mix_rgb(rgb, palette[2], _smoothstep(0.52, 0.86, n_blob + 0.22 * (n_det - 0.5)))
+            rgb = _mix_rgb(rgb, palette[4], 0.70 * _smoothstep(0.62, 0.94, n_det))
+            rgb = _mix_rgb(rgb, palette[5], _smoothstep(0.80, 0.98, n_micro))
+
+            speck = _hash01(camo_seedf * 0.001 + idx * 9.113 + 77.7 * n_micro)
+            if speck > 0.985:
+                rgb = _mix_rgb(rgb, palette[5], 0.65)
+
+            camo_base_rgb.append(rgb)
+            camo_freq.append(rng.uniform(0.03, 0.10))
+            camo_phase.append(rng.uniform(0.0, 1.0))
+
+    # fireworks (exploding fire arrows)
+    fireworks: List[Firework] = []
+    if cfg.kind == "fireworks":
+        dur = float(args.duration)
+        base_h = override_hsv[0] if override_hsv is not None else None
+        n_fw = max(6, int(round(dur / 1.35)))
+        for _ in range(n_fw):
+            t0 = rng.uniform(0.0, dur * 0.86)
+            x0 = rng.uniform(0.10, 0.90)
+            y0 = 1.08
+            x1 = _clamp01(x0 + rng.uniform(-0.22, 0.22))
+            y1 = rng.uniform(0.18, 0.55)
+            t_up = rng.uniform(0.85, 1.70)
+            t_burst = rng.uniform(1.55, 2.85)
+
+            if base_h is None:
+                if rng.random() < 0.70:
+                    hue = rng.choice([10/360.0, 20/360.0, 35/360.0, 45/360.0, 60/360.0, 330/360.0])
+                else:
+                    hue = rng.random()
+            else:
+                hue = (base_h + rng.uniform(-0.10, 0.10)) % 1.0
+
+            rays: List[FireRay] = []
+            n_rays = rng.randint(14, 24)
+            for k in range(n_rays):
+                ang = (2.0 * math.pi) * (k / float(n_rays)) + rng.uniform(-0.16, 0.16)
+                dx = math.cos(ang)
+                dy = math.sin(ang)
+                rays.append(FireRay(
+                    dx=dx, dy=dy,
+                    speed=rng.uniform(0.33, 0.72),
+                    width=rng.uniform(0.007, 0.014),
+                    hue_off=rng.uniform(-0.09, 0.09),
+                    phase=rng.uniform(0.0, 1.0),
+                ))
+
+            fireworks.append(Firework(
+                t0=t0, x0=x0, y0=y0, x1=x1, y1=y1,
+                t_up=t_up, t_burst=t_burst,
+                hue=hue,
+                rays=tuple(rays),
+                sparkle_phase=rng.uniform(0.0, 1.0),
+            ))
 
     # ---------------- Render frames ----------------
     tmp_root = Path(tempfile.mkdtemp(prefix="mmxx_video_"))
@@ -1721,8 +2061,12 @@ def main() -> None:
                         if gate > 0.001:
                             drift = cfg.fire_hue_drift_amp * math.sin(2.0 * math.pi * (cfg.fire_hue_drift_freq * t + ph.phase))
                             fh = (ph.fire_hue + drift) % 1.0
-                            sat_base = cfg.fire_sat_base_min + (cfg.fire_sat_base_max - cfg.fire_sat_base_min) * (0.5 + 0.5 * math.sin(2*math.pi*(0.15*t + ph.phase)))
-                            sat_peak = cfg.fire_sat_peak_min + (cfg.fire_sat_peak_max - cfg.fire_sat_peak_min) * (0.5 + 0.5 * math.sin(2*math.pi*(0.22*t + ph.freq)))
+                            sat_base = cfg.fire_sat_base_min + (cfg.fire_sat_base_max - cfg.fire_sat_base_min) * (
+                                0.5 + 0.5 * math.sin(2*math.pi*(0.15*t + ph.phase))
+                            )
+                            sat_peak = cfg.fire_sat_peak_min + (cfg.fire_sat_peak_max - cfg.fire_sat_peak_min) * (
+                                0.5 + 0.5 * math.sin(2*math.pi*(0.22*t + ph.freq))
+                            )
                             s = _clamp01((sat_base + gate * sat_peak) * ph.fire_sat_mul)
                             v = _clamp01(0.55 + 0.45 * gate)
                             fire_rgb = _hsv01_to_rgb255(fh, s, v)
@@ -1765,8 +2109,12 @@ def main() -> None:
                         if gate > 0.001:
                             drift = cfg.fire_hue_drift_amp * math.sin(2.0 * math.pi * (cfg.fire_hue_drift_freq * t + ph.phase))
                             fh = (ph.fire_hue + drift) % 1.0
-                            sat_base = cfg.fire_sat_base_min + (cfg.fire_sat_base_max - cfg.fire_sat_base_min) * (0.5 + 0.5 * math.sin(2*math.pi*(0.15*t + ph.phase)))
-                            sat_peak = cfg.fire_sat_peak_min + (cfg.fire_sat_peak_max - cfg.fire_sat_peak_min) * (0.5 + 0.5 * math.sin(2*math.pi*(0.22*t + ph.freq)))
+                            sat_base = cfg.fire_sat_base_min + (cfg.fire_sat_base_max - cfg.fire_sat_base_min) * (
+                                0.5 + 0.5 * math.sin(2*math.pi*(0.15*t + ph.phase))
+                            )
+                            sat_peak = cfg.fire_sat_peak_min + (cfg.fire_sat_peak_max - cfg.fire_sat_peak_min) * (
+                                0.5 + 0.5 * math.sin(2*math.pi*(0.22*t + ph.freq))
+                            )
                             s2 = _clamp01((sat_base + gate * sat_peak) * ph.fire_sat_mul)
                             v2 = _clamp01(0.55 + 0.45 * gate)
                             fire_rgb = _hsv01_to_rgb255(fh, s2, v2)
@@ -1940,17 +2288,14 @@ def main() -> None:
                 pulse = _beat_wave_smooth(t)
                 assert heart_fit is not None
 
-                # Valentines-like palette bias (pinks/reds) + a little golden sparkle.
                 base_h = (override_hsv[0] if override_hsv is not None else (335 / 360.0))
 
                 for idx, poly in enumerate(polys):
                     nx = poly_nx[idx]
                     ny = poly_ny[idx]
 
-                    # AA mask for smoother growth/edges on mosaic polygons
                     mask, glow = _heart_mask_icon_aa(nx, ny, pulse, heart_fit)
 
-                    # Background: deep plum/charcoal with a soft vignette (so heart pops)
                     bg_h = (300/360.0) + 0.010 * math.sin(2.0 * math.pi * (0.03 * t + nx * 0.7))
                     bg_s = 0.35
                     vign = math.sqrt((nx - 0.5) ** 2 + (ny - 0.5) ** 2)
@@ -1959,18 +2304,15 @@ def main() -> None:
                     bg_v = _clamp01(bg_v)
                     bg_rgb = _hsv01_to_rgb255(bg_h, bg_s, bg_v)
 
-                    # Heart base hue: valentines-ish sweep with jitter
                     h = (base_h
                          + 0.090 * (nx - 0.5)
                          + 0.040 * math.sin(2.0 * math.pi * (0.09 * t + ny * 0.9))
                          + heart_hj[idx]) % 1.0
 
-                    # Saturation: generally high like valentines, but with random breathing so it doesn't feel flat
                     sat_breathe = 0.85 + 0.30 * (0.5 + 0.5 * math.sin(2.0 * math.pi * (0.12 * t + heart_tw_p[idx])))
                     s = (0.72 + 0.30 * mask + 0.22 * glow) * heart_sj[idx] * sat_breathe
                     s = _clamp01(s)
 
-                    # Value: brighter "whitespace" inside heart, especially during the beat; keep edges very bright
                     v = 0.18 + 0.46 * mask
                     v += 0.34 * mask * (0.18 + 0.82 * pulse)
                     v += 0.22 * glow * (0.30 + 0.70 * pulse)
@@ -1979,29 +2321,78 @@ def main() -> None:
                     heart_rgb = _hsv01_to_rgb255(h, s, v)
                     rgb = _mix_rgb(bg_rgb, heart_rgb, mask)
 
-                    # Edge + internal sheen: pink-white + occasional warm sparkle (valentines vibe)
                     edge = _clamp01(glow * (0.22 + 0.40 * pulse))
                     rgb = _mix_rgb(rgb, (255, 255, 255), 0.40 * edge)
 
-                    # Add a tinted "fire" sparkle hue on strong edge glow (like valentines dispersion)
                     fire_gate = _smoothstep(0.35, 0.92, edge)
                     if fire_gate > 0.0:
                         fh = (heart_fire_h[idx] + 0.02 * math.sin(2.0 * math.pi * (0.06 * t + nx))) % 1.0
                         fire_rgb = _hsv01_to_rgb255(fh, _clamp01(0.65 + 0.35 * s), 1.0)
                         rgb = _mix_rgb(rgb, fire_rgb, 0.18 * fire_gate)
 
-                    # Twinkles (more valentine-like: whiter heads + colored flare)
                     tw = facet_shimmer(t, heart_tw_f[idx], heart_tw_p[idx])
                     tw = (mask ** 1.55) * (tw ** 1.30)
                     sparkle = _clamp01(tw * (0.06 + 0.22 * pulse) + (mask ** 2.2) * (0.02 + 0.06 * pulse))
                     if sparkle > 0.0:
                         rgb = _mix_rgb(rgb, (255, 255, 255), sparkle)
-                        # subtle colored rim on sparkles
                         fh2 = (heart_fire_h[idx] + 0.015 * math.sin(2.0 * math.pi * (0.08 * t + ny))) % 1.0
                         flare = _hsv01_to_rgb255(fh2, 0.85, 1.0)
                         rgb = _mix_rgb(rgb, flare, 0.10 * sparkle)
 
                     rgb = mix_to_white(rgb, amb * 0.10)
+                    poly.set("fill", _rgb_to_hex(rgb))
+
+            elif cfg.kind == "camo":
+                for idx, poly in enumerate(polys):
+                    nx = poly_nx[idx]
+                    ny = poly_ny[idx]
+                    base = camo_base_rgb[idx]
+
+                    ripple = 0.92 + 0.10 * (0.5 + 0.5 * math.sin(
+                        2.0 * math.pi * (camo_freq[idx] * t + camo_phase[idx] + nx * 0.90 + ny * 0.55)
+                    ))
+                    vgn = math.sqrt((nx - 0.5) ** 2 + (ny - 0.5) ** 2)
+                    ripple *= 0.96 + 0.06 * (1.0 - _smoothstep(0.15, 0.95, vgn))
+
+                    rgb = _mul_rgb(base, ripple)
+                    rgb = mix_to_white(rgb, amb * 0.06)
+                    poly.set("fill", _rgb_to_hex(rgb))
+
+            elif cfg.kind == "fireworks":
+                for idx, poly in enumerate(polys):
+                    nx = poly_nx[idx]
+                    ny = poly_ny[idx]
+
+                    bg_h = (250/360.0) + 0.015 * math.sin(2.0 * math.pi * (0.03 * t + nx * 1.3))
+                    bg_s = 0.50
+                    bg_v = 0.03 + 0.08 * (1.0 - ny) ** 1.35
+                    bg_v += 0.01 * math.sin(2.0 * math.pi * (0.06 * t + nx * 0.9 + ny * 0.7))
+                    bg_v = _clamp01(bg_v)
+                    bg = _hsv01_to_rgb255(bg_h, bg_s, bg_v)
+
+                    r_acc = float(bg[0])
+                    g_acc = float(bg[1])
+                    b_acc = float(bg[2])
+
+                    for fw in fireworks:
+                        fr, fg, fb = _firework_additive_rgb(nx, ny, t, fw)
+                        r_acc += fr
+                        g_acc += fg
+                        b_acc += fb
+
+                    hot = max(r_acc, g_acc, b_acc) / 255.0
+                    hot_gate = _smoothstep(0.85, 1.30, hot)
+                    if hot_gate > 0.0:
+                        r_acc = _lerp(r_acc, 255.0, 0.40 * hot_gate)
+                        g_acc = _lerp(g_acc, 255.0, 0.40 * hot_gate)
+                        b_acc = _lerp(b_acc, 255.0, 0.40 * hot_gate)
+
+                    rgb = (
+                        max(0, min(255, int(round(r_acc)))),
+                        max(0, min(255, int(round(g_acc)))),
+                        max(0, min(255, int(round(b_acc)))),
+                    )
+                    rgb = mix_to_white(rgb, amb * 0.04)
                     poly.set("fill", _rgb_to_hex(rgb))
 
             else:
