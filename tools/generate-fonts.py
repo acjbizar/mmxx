@@ -38,6 +38,9 @@ DESCENT = 0
 
 NUM_RE = re.compile(r"[-+]?(?:\d+\.?\d*|\.\d+)(?:[eE][-+]?\d+)?")
 
+# New filename format: character-u{hex}.svg, optionally multi-codepoint: character-u1f1f3_u1f1f1.svg
+UFILE_RE = re.compile(r"^u([0-9A-Fa-f]{4,})(?:_u([0-9A-Fa-f]{4,}))*$")
+
 
 # -----------------------------
 # Helpers
@@ -48,6 +51,41 @@ def _write_text_lf(path: Path, text: str) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     with path.open("w", encoding="utf-8", newline="\n") as f:
         f.write(text)
+
+def _cp_slug_for_char(ch: str) -> str:
+    """Return filename slug like u0061 or u1f642 (lowercase hex, padded to >=4)."""
+    cp = ord(ch)
+    hx = format(cp, "x").rjust(4, "0")
+    return f"u{hx}"
+
+def _parse_u_slug_to_codepoints(slug: str) -> Optional[List[int]]:
+    """
+    Parse a slug like:
+      u0061
+      u1f642
+      u1f1f3_u1f1f1
+    into a list of ints.
+    Returns None if invalid.
+    """
+    if not slug.startswith("u"):
+        return None
+    parts = slug.split("_u")
+    if not parts:
+        return None
+    # first part begins with 'u'
+    parts[0] = parts[0][1:]
+    cps: List[int] = []
+    for hx in parts:
+        if not hx or not re.fullmatch(r"[0-9A-Fa-f]{4,}", hx):
+            return None
+        cp = int(hx, 16)
+        if cp < 0 or cp > 0x10FFFF:
+            return None
+        # skip surrogate range (invalid scalar values)
+        if 0xD800 <= cp <= 0xDFFF:
+            return None
+        cps.append(cp)
+    return cps
 
 
 # -----------------------------
@@ -64,35 +102,91 @@ def glyph_name_for_char(ch: str) -> str:
 # File resolution
 # -----------------------------
 def resolve_glyph_svg(src_dir: Path, ch: str) -> Optional[Path]:
+    """
+    Prefer new naming:
+      character-u{codepoint}.svg
+    Fallback to legacy:
+      character-{lower}.svg / character-{upper}.svg
+    """
+    slug = _cp_slug_for_char(ch)
+    candidates = [
+        src_dir / f"character-{slug}.svg",
+        src_dir / f"character-{slug.upper()}.svg",
+    ]
+
     lo = ch.lower()
     up = ch.upper()
-    candidates = [
+    candidates += [
         src_dir / f"character-{lo}.svg",
         src_dir / f"character-{up}.svg",
     ]
+
     for p in candidates:
         if p.exists():
             return p
     return None
 
 def resolve_inverse_svg(src_dir: Path, ch: str) -> Optional[Path]:
+    """
+    Inverse files may still be legacy inverse-{char}.svg.
+    Also support inverse-u{codepoint}.svg if you ever rename them similarly.
+    """
+    slug = _cp_slug_for_char(ch)
+    candidates = [
+        src_dir / f"inverse-{slug}.svg",
+        src_dir / f"inverse-{slug.upper()}.svg",
+    ]
+
     lo = ch.lower()
     up = ch.upper()
-    candidates = [
+    candidates += [
         src_dir / f"inverse-{lo}.svg",
         src_dir / f"inverse-{up}.svg",
     ]
+
     for p in candidates:
         if p.exists():
             return p
     return None
 
 def discover_chars(src_dir: Path) -> List[str]:
-    chars = set()
+    """
+    Discover characters from:
+      - character-u{hex}.svg  (preferred)
+      - character-{char}.svg  (legacy, single-char only)
+    Skips multi-codepoint filenames (e.g. u1f1f3_u1f1f1) because cmap maps single codepoints.
+    """
+    chars: set[str] = set()
+    skipped_multi: List[str] = []
+
     for p in src_dir.glob("character-*.svg"):
-        name = p.stem[len("character-"):]
-        if len(name) == 1:
-            chars.add(name)
+        stem_part = p.stem[len("character-"):]  # after 'character-'
+
+        # New format
+        if stem_part.startswith("u"):
+            cps = _parse_u_slug_to_codepoints(stem_part)
+            if not cps:
+                continue
+            if len(cps) != 1:
+                # sequences can’t go into cmap directly; would need GSUB sequence handling
+                skipped_multi.append(p.name)
+                continue
+            try:
+                chars.add(chr(cps[0]))
+            except Exception:
+                continue
+            continue
+
+        # Legacy single-char format
+        if len(stem_part) == 1:
+            chars.add(stem_part)
+
+    if skipped_multi:
+        print(
+            "[warn] Skipped multi-codepoint character SVGs (not directly mappable via cmap):\n"
+            + "\n".join(f"  - {n}" for n in sorted(skipped_multi)),
+            file=sys.stderr,
+        )
 
     ordered: List[str] = []
     for c in "0123456789":
@@ -336,7 +430,7 @@ def build_mmxx_font(src_dir: Path, dist_dir: Path) -> None:
 
     chars = discover_chars(src_dir)
     if not chars:
-        raise SystemExit(f"No files found in {src_dir} matching character-*.svg")
+        raise SystemExit(f"No files found in {src_dir} matching character-u*.svg (or legacy character-?.svg)")
 
     # base glyph names
     char_to_gname = {ch: glyph_name_for_char(ch) for ch in chars}
@@ -470,8 +564,8 @@ def build_mmxx_font(src_dir: Path, dist_dir: Path) -> None:
     else:
         print(f"[warn] CSS source not found: {css_src}", file=sys.stderr)
 
-    print(f"Source SVGs:  {src_dir.resolve()}  (character-{{char}}.svg)")
-    print(f"Inverse flags:{src_dir.resolve()}  (inverse-{{char}}.svg) -> GSUB 'salt'")
+    print(f"Source SVGs:  {src_dir.resolve()}  (character-u{{codepoint}}.svg; legacy character-{{char}}.svg supported)")
+    print(f"Inverse flags:{src_dir.resolve()}  (inverse-{{char}}.svg or inverse-u{{codepoint}}.svg) -> GSUB 'salt'")
     print(f"Fonts:        {fonts_dir.resolve()}")
     print(f"TTF:          {ttf_path.resolve()}")
     print(f"CSS:          {css_dst.resolve()}")
