@@ -36,6 +36,7 @@ Themes:
 - snow: high-contrast cold greys + frosty sparkle
 - minecraft (grass block texture sampling)
 - deidee (alpha=0.5, only interpolates between random samples from given distribution)
+- ecat: pulsating animated graphical heart (shape + glow + heartbeat)
 
 Output:
   dist/videos/{character|inverse}-u{codepoint}.{ext}
@@ -603,7 +604,7 @@ def facet_shimmer(t: float, freq: float, phase: float) -> float:
 
 
 def make_pulses(rng: random.Random, duration: float, theme: str) -> List[Pulse]:
-    if theme in {"deidee", "matrix"}:
+    if theme in {"deidee", "matrix", "ecat"}:
         return []
 
     if theme != "classic":
@@ -645,7 +646,7 @@ def whiteness_at(t: float, pulses: List[Pulse]) -> float:
 
 @dataclass(frozen=True)
 class ThemeConfig:
-    kind: str  # "classic", "diamond", "hsv_body", "minecraft", "deidee"
+    kind: str  # "classic", "diamond", "hsv_body", "minecraft", "deidee", "ecat"
     base_hue: Optional[float] = None
     hue_jitter: float = 0.0
 
@@ -733,6 +734,10 @@ def get_theme_config(theme: str) -> ThemeConfig:
 
     if theme == "deidee":
         return ThemeConfig(kind="deidee")
+
+    if theme == "ecat":
+        # handled by custom renderer (heart shape + glow + heartbeat)
+        return ThemeConfig(kind="ecat", amb_base=0.02, amb_amp=0.02, amb_freq=0.03)
 
     if theme == "diamond":
         return ThemeConfig(
@@ -1158,6 +1163,71 @@ def _timestamped_if_exists(path: Path) -> Path:
     return path.with_name(f"{path.stem}-{ts}{path.suffix}")
 
 
+# -------------------- ecat helpers -------------------------------------------
+
+def _beat_wave(t: float) -> float:
+    """
+    Smooth "double-beat" heartbeat per cycle.
+    Returns 0..1 (not linear time; peaks are brief).
+    """
+    cycle = 1.18  # seconds
+    p = (t / cycle) % 1.0
+
+    def bump(phase: float, center: float, width: float) -> float:
+        d = abs((phase - center + 0.5) % 1.0 - 0.5)
+        if d >= width:
+            return 0.0
+        x = d / width
+        return 0.5 * (1.0 + math.cos(math.pi * x))
+
+    b1 = bump(p, 0.11, 0.07)   # smaller pre-beat
+    b2 = bump(p, 0.23, 0.09)   # main beat
+
+    # soft tail decay after main beat (keeps it alive, but not flashy)
+    tail = 0.16 * (1.0 - _smoothstep(0.23, 0.92, p))
+
+    pulse = 0.06 + 0.55 * b1 + 1.00 * b2 + tail
+    pulse = _clamp01(pulse)
+
+    # sharpen peaks a bit
+    return _clamp01(pulse ** 1.12)
+
+
+def _heart_mask(nx: float, ny: float, pulse: float) -> Tuple[float, float]:
+    """
+    Returns (mask, glow) where:
+      - mask ~1 inside heart, ~0 outside (soft edge)
+      - glow peaks near boundary
+    """
+    # map to [-1..1], invert y (SVG y goes down)
+    x = nx * 2.0 - 1.0
+    y = (1.0 - ny) * 2.0 - 1.0
+
+    # shift up a bit so it "sits" nicer
+    y += 0.18
+
+    # pulsation = scale heart size (bigger on pulse peaks)
+    s = 1.0 + 0.10 * pulse
+    x /= s
+    y /= s
+
+    # mild anisotropic tweak (more "graphic" heart)
+    x *= 1.05
+    y *= 1.03
+
+    # implicit heart curve:
+    # (x^2 + y^2 - 1)^3 - x^2 * y^3 = 0
+    val = (x * x + y * y - 1.0) ** 3 - (x * x) * (y ** 3)
+
+    edge = 0.060
+    mask = 1.0 - _smoothstep(-edge, edge, val)  # inside => ~1
+
+    # glow based on closeness to boundary
+    glow = math.exp(-abs(val) * 9.5)
+
+    return (_clamp01(mask), _clamp01(glow))
+
+
 # -------------------- MAIN ----------------------------------------------------
 
 def main() -> None:
@@ -1194,6 +1264,7 @@ def main() -> None:
             "snow",
             "minecraft",
             "deidee",
+            "ecat",
         ],
         help="Animation theme.",
     )
@@ -1362,6 +1433,18 @@ def main() -> None:
             st = (poly.get("style") or "").strip()
             poly.set("style", _style_set(st, "fill-opacity", f"{de_alpha:.3f}"))
 
+    # ecat per-poly micro-variation (keeps it alive, but still "graphic")
+    ecat_hue_jit: List[float] = []
+    ecat_sat_jit: List[float] = []
+    ecat_tw_f: List[float] = []
+    ecat_tw_p: List[float] = []
+    if cfg.kind == "ecat":
+        for _ in polys:
+            ecat_hue_jit.append(rng.uniform(-0.015, 0.015))
+            ecat_sat_jit.append(rng.uniform(0.92, 1.10))
+            ecat_tw_f.append(rng.uniform(0.55, 1.80))
+            ecat_tw_p.append(rng.uniform(0.0, 1.0))
+
     mc_tex: Optional[List[Tuple[int, int, int]]] = None
     mc_tw = mc_th = 0
     mc_base_rgb: List[Tuple[int, int, int]] = []
@@ -1426,7 +1509,8 @@ def main() -> None:
                     flicker_phase=rng.random(),
                 ))
 
-    if cfg.kind not in ("classic", "deidee"):
+    # Precompute for non-classic, non-deidee, non-ecat
+    if cfg.kind not in ("classic", "deidee", "ecat"):
         for idx, poly in enumerate(polys):
             if cfg.kind == "diamond":
                 if rng.random() < 0.52:
@@ -1599,7 +1683,70 @@ def main() -> None:
                     st = (poly.get("style") or "").strip()
                     poly.set("style", _style_set(st, "fill-opacity", f"{de_alpha:.3f}"))
 
+            elif cfg.kind == "ecat":
+                pulse = _beat_wave(t)
+
+                # let --color optionally steer heart hue (nice for experiments)
+                if override_hsv is not None:
+                    heart_h_base = override_hsv[0]
+                else:
+                    heart_h_base = 350 / 360.0  # hot pink/red
+
+                # subtle ambient breathing
+                amb = cfg.amb_base + cfg.amb_amp * (0.5 + 0.5 * math.sin(2.0 * math.pi * (cfg.amb_freq * t)))
+
+                for idx, poly in enumerate(polys):
+                    nx = poly_nx[idx]
+                    ny = poly_ny[idx]
+
+                    mask, glow = _heart_mask(nx, ny, pulse)
+
+                    # background: deep purple with a little reactive glow
+                    bg_h = (292 / 360.0 + 0.012 * math.sin(2.0 * math.pi * (0.05 * t))) % 1.0
+                    bg_s = 0.62
+                    bg_v = _clamp01(0.020 + 0.060 * glow + 0.020 * pulse)
+                    bg_rgb = _hsv01_to_rgb255(bg_h, bg_s, bg_v)
+
+                    # heart body: red/pink, brighter on beats + slightly richer near boundary
+                    h = (heart_h_base
+                         + 0.040 * (nx - 0.5)
+                         + 0.018 * math.sin(2.0 * math.pi * (0.18 * t + ny * 0.60))
+                         + ecat_hue_jit[idx]) % 1.0
+
+                    s = _clamp01((0.80 + 0.22 * mask + 0.12 * glow) * ecat_sat_jit[idx])
+
+                    v = 0.10
+                    v += 0.22 * mask
+                    v += 0.52 * mask * (0.32 + 0.68 * pulse)
+                    v += 0.24 * glow * (0.40 + 0.60 * pulse)
+                    v = _clamp01(v)
+
+                    heart_rgb = _hsv01_to_rgb255(h, s, v)
+
+                    # blend heart into bg
+                    rgb = _mix_rgb(bg_rgb, heart_rgb, mask)
+
+                    # boundary glow pop
+                    rgb = _mix_rgb(rgb, heart_rgb, glow * (0.28 + 0.30 * pulse))
+
+                    # add “graphic depth”: top a bit brighter, bottom a bit darker
+                    depth = 0.88 + 0.26 * (0.55 - ny)
+                    depth = max(0.75, min(1.15, depth))
+                    rgb = _scale_rgb(rgb, depth)
+
+                    # twinkle highlights inside heart during beat peaks
+                    tw = facet_shimmer(t, ecat_tw_f[idx], ecat_tw_p[idx])
+                    tw = (mask ** 1.55) * (tw ** 1.4)
+                    white_mix = _clamp01(tw * (0.06 + 0.26 * pulse) + (mask ** 1.9) * (0.05 + 0.14 * pulse))
+                    rgb = _mix_rgb(rgb, (255, 255, 255), white_mix)
+
+                    # gentle ambient lift (prevents crushing)
+                    rgb = mix_to_white(rgb, amb)
+
+                    poly.set("fill", _rgb_to_hex(rgb))
+
             else:
+                # (all other themes unchanged from earlier versions)
                 global_amb = cfg.amb_base + cfg.amb_amp * (0.5 + 0.5 * math.sin(2.0 * math.pi * (cfg.amb_freq * t)))
 
                 for idx, poly in enumerate(polys):
