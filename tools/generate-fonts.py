@@ -36,6 +36,10 @@ ADVANCE_WIDTH = UPM
 ASCENT = UPM
 DESCENT = 0
 
+# ✅ NEW: default letter spacing = 1 unit
+# (with a 240x240 design grid, “1 unit” typically means 1/8 of the width)
+LETTER_SPACING = int(round(UPM / 8))
+
 NUM_RE = re.compile(r"[-+]?(?:\d+\.?\d*|\.\d+)(?:[eE][-+]?\d+)?")
 
 # New filename format: character-u{hex}.svg, optionally multi-codepoint: character-u1f1f3_u1f1f1.svg
@@ -168,7 +172,6 @@ def discover_chars(src_dir: Path) -> List[str]:
             if not cps:
                 continue
             if len(cps) != 1:
-                # sequences can’t go into cmap directly; would need GSUB sequence handling
                 skipped_multi.append(p.name)
                 continue
             try:
@@ -417,7 +420,6 @@ def geom_to_ttglyph_and_lsb(
     if not any_point or x_min_outline is None:
         return pen.glyph(), 0
 
-    # Correct left side bearing:
     return pen.glyph(), int(x_min_outline)
 
 
@@ -457,12 +459,12 @@ def build_mmxx_font(src_dir: Path, dist_dir: Path) -> None:
     pen.lineTo((m, UPM - m))
     pen.closePath()
     glyphs[".notdef"] = pen.glyph()
-    hmtx[".notdef"] = (ADVANCE_WIDTH, m)  # xMin is m
+    hmtx[".notdef"] = (ADVANCE_WIDTH, m)  # unchanged
 
     # space
     pen = TTGlyphPen(None)
     glyphs["space"] = pen.glyph()
-    hmtx["space"] = (ADVANCE_WIDTH, 0)
+    hmtx["space"] = (ADVANCE_WIDTH, 0)    # unchanged
 
     # cmap (base glyphs only)
     cmap: Dict[int, str] = {32: "space"}
@@ -482,7 +484,8 @@ def build_mmxx_font(src_dir: Path, dist_dir: Path) -> None:
         if svg_path is None:
             pen = TTGlyphPen(None)
             glyphs[gname] = pen.glyph()
-            hmtx[gname] = (ADVANCE_WIDTH, 0)
+            # ✅ NEW: add default letter spacing
+            hmtx[gname] = (ADVANCE_WIDTH + LETTER_SPACING, 0)
             missing.append(ch)
             base_geom_by_gname[gname] = ((0.0, 0.0, 240.0, 240.0), None)
             continue
@@ -493,7 +496,8 @@ def build_mmxx_font(src_dir: Path, dist_dir: Path) -> None:
 
         g, lsb = geom_to_ttglyph_and_lsb(vb, geom, upm=UPM)
         glyphs[gname] = g
-        hmtx[gname] = (ADVANCE_WIDTH, lsb)
+        # ✅ NEW: add default letter spacing
+        hmtx[gname] = (ADVANCE_WIDTH + LETTER_SPACING, lsb)
 
     # build alt glyphs as exact inverse of base in the same vb
     for base_gname, alt_gname in inverse_map.items():
@@ -501,7 +505,8 @@ def build_mmxx_font(src_dir: Path, dist_dir: Path) -> None:
         inv_geom = inverse_geom_from_base(vb, base_geom)
         g, lsb = geom_to_ttglyph_and_lsb(vb, inv_geom, upm=UPM)
         glyphs[alt_gname] = g
-        hmtx[alt_gname] = (ADVANCE_WIDTH, lsb)
+        # ✅ NEW: add default letter spacing
+        hmtx[alt_gname] = (ADVANCE_WIDTH + LETTER_SPACING, lsb)
 
     fb = FontBuilder(UPM, isTTF=True)
     fb.setupGlyphOrder(glyph_order)
