@@ -31,11 +31,9 @@ Themes:
 - ruby / jade / sapphire / emerald
 - rainbow
 - fire / ice
-- valentines / matrix
-- holographic (iridescent, prismatic drift)
-- sunset (warm gradient drift)
-- laser-grid (neon palette + moving gridline sparkle)
-- snow (high-contrast cold greys + frosty sparkle)
+- valentines
+- matrix: "code rain" columns (falling bright heads + trailing tails)
+- snow: high-contrast cold greys + frosty sparkle
 - minecraft (grass block texture sampling)
 - deidee (alpha=0.5, only interpolates between random samples from given distribution)
 
@@ -95,6 +93,8 @@ _TRANSLATE_RE = re.compile(
     r"translate\(\s*(" + NUM_RE.pattern + r")\s*(?:[, ]\s*(" + NUM_RE.pattern + r"))?\s*\)",
     re.I
 )
+
+_URL_ID_RE = re.compile(r"url\(#([^)]+)\)")
 
 
 # -------------------- Helpers: SVG parsing / color ----------------------------
@@ -336,10 +336,6 @@ def _global_centroid_norm(poly: etree._Element, vb: Tuple[float, float, float, f
 # -------------------- Char/codepoint parsing ---------------------------------
 
 def _parse_char_or_codepoint(s: str) -> Tuple[str, int, str]:
-    """
-    Returns (token, codepoint_int, display_string)
-    token format: u0061, u1f600, ...
-    """
     raw = (s or "").strip()
     if not raw:
         raise ValueError("Empty char/codepoint")
@@ -363,10 +359,6 @@ def _parse_char_or_codepoint(s: str) -> Tuple[str, int, str]:
 
 
 def _parse_chars_arg(chars: str) -> List[Tuple[str, int, str]]:
-    """
-    If it's whitespace-separated codepoint tokens (all look like uXXXX/U+XXXX/XXXX), parse tokens.
-    Otherwise, treat as literal characters (spaces ignored).
-    """
     s = (chars or "").strip()
     if not s:
         return []
@@ -380,9 +372,6 @@ def _parse_chars_arg(chars: str) -> List[Tuple[str, int, str]]:
 
 
 def _safe_logo_key(items: List[Tuple[str, int, str]]) -> str:
-    """
-    Safe filename key. Keeps ASCII alnum chars; otherwise uses token.
-    """
     out: List[str] = []
     for token, _cp, disp in items:
         if len(disp) == 1 and ord(disp) < 128 and disp.isalnum():
@@ -419,7 +408,7 @@ def _load_minecraft_texture_16x16(source: str) -> Tuple[List[Tuple[int, int, int
     pixels: List[Tuple[int, int, int]] = []
     for y in range(h):
         for x in range(w):
-            r, g, b, a = img.getpixel((x, y))
+            r, g, b, _a = img.getpixel((x, y))
             pixels.append((int(r), int(g), int(b)))
     return pixels, w, h
 
@@ -443,9 +432,6 @@ def _glyph_viewbox_for_element(el: etree._Element, fallback: Tuple[float, float,
 
 
 # -------------------- Logo building (combine character SVGs into grid) --------
-
-_URL_ID_RE = re.compile(r"url\(#([^)]+)\)")
-
 
 def _prefix_svg_ids(svg_fragment: etree._Element, prefix: str) -> None:
     id_map: Dict[str, str] = {}
@@ -617,8 +603,9 @@ def facet_shimmer(t: float, freq: float, phase: float) -> float:
 
 
 def make_pulses(rng: random.Random, duration: float, theme: str) -> List[Pulse]:
-    if theme == "deidee":
+    if theme in {"deidee", "matrix"}:
         return []
+
     if theme != "classic":
         pulses: List[Pulse] = []
         n_glints = rng.randint(2, 4) if theme == "minecraft" else rng.randint(1, 3)
@@ -662,7 +649,6 @@ class ThemeConfig:
     base_hue: Optional[float] = None
     hue_jitter: float = 0.0
 
-    # Optional palette bias for selecting body hues when base_hue is None
     palette_hues: Optional[List[float]] = None
     palette_bias_prob: float = 0.0
     palette_hue_jitter: float = 0.0
@@ -716,6 +702,17 @@ class ThemeConfig:
 
     fire_white_mix_min: float = 0.48
     fire_white_mix_max: float = 0.72
+
+
+@dataclass(frozen=True)
+class MatrixDrop:
+    speed: float
+    phase: float
+    tail: float
+    head: float
+    strength: float
+    flicker_freq: float
+    flicker_phase: float
 
 
 _FIRE_HUES_DEFAULT: List[float] = [
@@ -991,84 +988,15 @@ def get_theme_config(theme: str) -> ThemeConfig:
             val_shimmer_amp=0.030,
             spec_edge0=0.44, spec_scale=0.94,
             sheen_mix=0.06, sheen_sat_boost=0.40, sheen_hue_shift=-0.010,
-            fire_prob=0.92,
-            fire_hues=[110/360.0, 120/360.0, 130/360.0, 95/360.0, 145/360.0],
-            fire_hue_jitter=0.06,
-            fire_sat_base_min=0.35, fire_sat_base_max=0.75,
-            fire_sat_peak_min=0.90, fire_sat_peak_max=1.00,
-            fire_white_mix_min=0.02, fire_white_mix_max=0.14,
-        ))
-
-    # ---- NEW THEMES ----
-
-    if theme == "holographic":
-        # Iridescent / prismatic: big hue motion + rainbow glints, low white-mix
-        return _cfg_merge(common, dict(
-            base_hue=None,
-            body_sat_min=0.78, body_sat_max=1.00,
-            body_v_min=0.16, body_v_max=0.96, body_v_gamma=0.95,
-            body_sat_mul=1.12,
-            sat_dark_boost=0.12,
-            hue_tone_amp=0.010,
-            hue_shimmer_amp=0.085,
-            val_shimmer_amp=0.060,
-            spec_edge0=0.46, spec_scale=0.96,
-            sheen_mix=0.08, sheen_sat_boost=0.48, sheen_hue_shift=0.012,
-            fire_prob=0.88,
-            fire_hues=_FIRE_HUES_DEFAULT,
-            fire_hue_jitter=0.16,
-            fire_sat_base_min=0.30, fire_sat_base_max=0.70,
-            fire_sat_peak_min=0.90, fire_sat_peak_max=1.00,
-            fire_white_mix_min=0.02, fire_white_mix_max=0.22,
-        ))
-
-    if theme == "sunset":
-        # Warm orange->pink->purple drift; brighter toward "horizon"
-        return _cfg_merge(common, dict(
-            base_hue=20/360.0, hue_jitter=0.22,
-            body_sat_min=0.68, body_sat_max=1.00,
-            body_v_min=0.18, body_v_max=0.98, body_v_gamma=0.95,
-            body_sat_mul=1.10,
-            sat_dark_boost=0.10,
-            hue_tone_amp=0.020,
-            hue_shimmer_amp=0.030,
-            val_shimmer_amp=0.050,
-            spec_edge0=0.50, spec_scale=0.92,
-            sheen_mix=0.12, sheen_sat_boost=0.34, sheen_hue_shift=0.010,
-            fire_prob=0.70,
-            fire_hues=[5/360.0, 20/360.0, 35/360.0, 50/360.0, 320/360.0, 295/360.0, 270/360.0],
-            fire_hue_jitter=0.10,
-            fire_sat_base_min=0.26, fire_sat_base_max=0.60,
-            fire_sat_peak_min=0.80, fire_sat_peak_max=1.00,
-            fire_white_mix_min=0.05, fire_white_mix_max=0.28,
-        ))
-
-    if theme == "laser-grid":
-        # Neon palette + sharper spec + extra gridline sparkle (added in render step)
-        return _cfg_merge(common, dict(
-            base_hue=None,
-            palette_hues=[185/360.0, 205/360.0, 295/360.0, 315/360.0, 120/360.0, 60/360.0],
-            palette_bias_prob=0.92,
-            palette_hue_jitter=0.03,
-            body_sat_min=0.85, body_sat_max=1.00,
-            body_v_min=0.05, body_v_max=0.80, body_v_gamma=1.35,
-            body_sat_mul=1.15,
-            sat_dark_boost=0.08,
-            hue_tone_amp=0.006,
-            hue_shimmer_amp=0.030,
-            val_shimmer_amp=0.040,
-            spec_edge0=0.42, spec_scale=0.98,
-            sheen_mix=0.05, sheen_sat_boost=0.45, sheen_hue_shift=0.004,
-            fire_prob=0.90,
-            fire_hues=[185/360.0, 205/360.0, 120/360.0, 295/360.0, 315/360.0, 60/360.0, 0/360.0],
-            fire_hue_jitter=0.08,
-            fire_sat_base_min=0.34, fire_sat_base_max=0.70,
-            fire_sat_peak_min=0.90, fire_sat_peak_max=1.00,
-            fire_white_mix_min=0.02, fire_white_mix_max=0.12,
+            fire_prob=0.20,
+            fire_hues=[110/360.0, 120/360.0, 130/360.0],
+            fire_hue_jitter=0.03,
+            fire_sat_base_min=0.20, fire_sat_base_max=0.45,
+            fire_sat_peak_min=0.55, fire_sat_peak_max=0.85,
+            fire_white_mix_min=0.00, fire_white_mix_max=0.10,
         ))
 
     if theme == "snow":
-        # Cold, high-contrast greys with frosty sparkle (mostly white-ish glints)
         return _cfg_merge(common, dict(
             base_hue=205/360.0, hue_jitter=0.05,
             body_sat_min=0.04, body_sat_max=0.30,
@@ -1233,7 +1161,7 @@ def _timestamped_if_exists(path: Path) -> Path:
 # -------------------- MAIN ----------------------------------------------------
 
 def main() -> None:
-    ap = argparse.ArgumentParser(description="Generate a polygon animation video from a character SVG or a square-grid logo.")
+    ap = argparse.ArgumentParser(description="Generate a polygon animation video from character SVGs (single or NxN logo).")
     g = ap.add_mutually_exclusive_group(required=True)
     g.add_argument("--char", type=str, default=None, help="Single character OR codepoint token (uXXXX / U+XXXX / XXXX).")
     g.add_argument(
@@ -1263,7 +1191,7 @@ def main() -> None:
             "rainbow",
             "fire", "ice",
             "valentines", "matrix",
-            "holographic", "sunset", "laser-grid", "snow",
+            "snow",
             "minecraft",
             "deidee",
         ],
@@ -1298,7 +1226,7 @@ def main() -> None:
     parser = etree.XMLParser(remove_blank_text=False, recover=True, remove_comments=False)
 
     if args.char is not None:
-        token, cp, disp = _parse_char_or_codepoint(args.char)
+        token, _cp, disp = _parse_char_or_codepoint(args.char)
         in_svg_path = src_dir / f"{glyph_prefix}-{token}.svg"
         if not in_svg_path.is_file():
             raise SystemExit(f"Input SVG not found: {in_svg_path}")
@@ -1371,7 +1299,7 @@ def main() -> None:
 
     rng = random.Random(args.seed)
 
-    # Per-poly normalized centroid (used by laser-grid / holo / sunset / snow tweaks)
+    # Per-poly normalized centroid
     poly_nx: List[float] = []
     poly_ny: List[float] = []
     for p in polys:
@@ -1379,7 +1307,7 @@ def main() -> None:
         poly_nx.append(nx)
         poly_ny.append(ny)
 
-    # Base colors for classic mode
+    # Determine base colors (classic)
     override_color = args.color.strip() or None
     base_rgb_override: Optional[Tuple[int, int, int]] = None
     override_hsv: Optional[Tuple[float, float, float]] = None
@@ -1398,9 +1326,19 @@ def main() -> None:
         except Exception:
             base_rgbs.append((0, 0, 0))
 
+    # Animation params
     pulses_per_poly: List[List[Pulse]] = [make_pulses(rng, float(args.duration), args.theme) for _ in polys]
 
-    # ---------------- deidee data ----------------
+    # Output sizing
+    max_dim = int(args.max_dim)
+    scale = float(max_dim) / float(max(vb_w, vb_h))
+    out_w = max(1, int(round(vb_w * scale)))
+    out_h = max(1, int(round(vb_h * scale)))
+
+    frames = int(round(float(args.duration) * int(args.fps)))
+    fps = int(args.fps)
+
+    # ---------------- Theme-specific precomputation ----------------
     de_alpha = 0.5
     de_colors_per_poly: List[List[Tuple[int, int, int]]] = []
     de_seg_dur: List[float] = []
@@ -1424,7 +1362,6 @@ def main() -> None:
             st = (poly.get("style") or "").strip()
             poly.set("style", _style_set(st, "fill-opacity", f"{de_alpha:.3f}"))
 
-    # ---------------- Minecraft / other theme params ----------------
     mc_tex: Optional[List[Tuple[int, int, int]]] = None
     mc_tw = mc_th = 0
     mc_base_rgb: List[Tuple[int, int, int]] = []
@@ -1451,12 +1388,46 @@ def main() -> None:
     poly_fire_sat_mul: List[float] = []
     poly_fire_white_mix: List[float] = []
 
+    # Matrix rain fields
+    matrix_cols: int = 0
+    matrix_rows: int = 0
+    matrix_col_for_poly: List[int] = []
+    matrix_sat_jitter: List[float] = []
+    matrix_hue_jitter: List[float] = []
+    matrix_col_hue_off: List[float] = []
+    matrix_drops_by_col: List[List[MatrixDrop]] = []
+    matrix_col_flicker_freq: List[float] = []
+    matrix_col_flicker_phase: List[float] = []
+
     if cfg.kind == "minecraft":
         mc_tex, mc_tw, mc_th = _load_minecraft_texture_16x16(args.minecraft_texture)
 
+    if args.theme == "matrix":
+        matrix_cols = max(24, min(64, int(round(vb_w / 8.0))))
+        matrix_rows = max(24, min(96, int(round(vb_h / 6.0))))
+
+        matrix_col_hue_off = [rng.uniform(-0.012, 0.012) for _ in range(matrix_cols)]
+        matrix_col_flicker_freq = [rng.uniform(0.15, 0.45) for _ in range(matrix_cols)]
+        matrix_col_flicker_phase = [rng.uniform(0.0, 1.0) for _ in range(matrix_cols)]
+        matrix_drops_by_col = [[] for _ in range(matrix_cols)]
+
+        for c in range(matrix_cols):
+            if rng.random() < 0.18:
+                continue
+            n_drops = 1 + (1 if rng.random() < 0.28 else 0) + (1 if rng.random() < 0.07 else 0)
+            for _ in range(n_drops):
+                matrix_drops_by_col[c].append(MatrixDrop(
+                    speed=rng.uniform(0.16, 0.46),
+                    phase=rng.random(),
+                    tail=rng.uniform(0.10, 0.28),
+                    head=rng.uniform(0.020, 0.060),
+                    strength=rng.uniform(0.55, 1.00) * (0.70 if rng.random() < 0.35 else 1.0),
+                    flicker_freq=rng.uniform(0.8, 2.4),
+                    flicker_phase=rng.random(),
+                ))
+
     if cfg.kind not in ("classic", "deidee"):
         for idx, poly in enumerate(polys):
-            # tone baseline
             if cfg.kind == "diamond":
                 if rng.random() < 0.52:
                     tone = (rng.random() ** 2.2) * 0.28
@@ -1476,7 +1447,6 @@ def main() -> None:
             poly_shimmer_freq.append(rng.uniform(0.05, 0.14))
             poly_shimmer_phase.append(rng.uniform(0.0, 1.0))
 
-            # body hue/sat (unused for diamond/minecraft but kept aligned)
             if cfg.kind in ("diamond", "minecraft"):
                 poly_body_hue.append(0.0)
                 poly_body_sat.append(0.0)
@@ -1489,20 +1459,13 @@ def main() -> None:
                     poly_body_sat.append(s)
                 else:
                     if cfg.base_hue is None:
-                        if cfg.palette_hues and rng.random() < cfg.palette_bias_prob:
-                            h = rng.choice(cfg.palette_hues)
-                            if cfg.palette_hue_jitter:
-                                h = (h + rng.uniform(-cfg.palette_hue_jitter, cfg.palette_hue_jitter)) % 1.0
-                        else:
-                            h = rng.random()
+                        h = rng.random()
                     else:
                         h = (cfg.base_hue + rng.uniform(-cfg.hue_jitter, cfg.hue_jitter)) % 1.0
-
                     s = rng.uniform(cfg.body_sat_min, cfg.body_sat_max)
                     poly_body_hue.append(h)
                     poly_body_sat.append(s)
 
-            # fire/glint settings
             poly_fire_enabled.append(rng.random() < cfg.fire_prob)
             if cfg.fire_hues is not None:
                 h_fire = rng.choice(cfg.fire_hues)
@@ -1514,17 +1477,19 @@ def main() -> None:
 
             sb = rng.uniform(cfg.fire_sat_base_min, cfg.fire_sat_base_max)
             sp = rng.uniform(cfg.fire_sat_peak_min, cfg.fire_sat_peak_max)
-            if rng.random() < cfg.fire_sat_mul_punchy_prob:
-                mul = rng.uniform(cfg.fire_sat_mul_punchy_lo, cfg.fire_sat_mul_punchy_hi)
-            else:
-                mul = rng.uniform(cfg.fire_sat_mul_lo, cfg.fire_sat_mul_hi)
+            mul = rng.uniform(cfg.fire_sat_mul_lo, cfg.fire_sat_mul_hi)
 
             poly_fire_sat_base.append(sb)
             poly_fire_sat_peak.append(sp)
             poly_fire_sat_mul.append(mul)
             poly_fire_white_mix.append(rng.uniform(cfg.fire_white_mix_min, cfg.fire_white_mix_max))
 
-            # minecraft sampling
+            if args.theme == "matrix":
+                col = min(matrix_cols - 1, int(poly_nx[idx] * matrix_cols)) if matrix_cols > 0 else 0
+                matrix_col_for_poly.append(col)
+                matrix_sat_jitter.append(rng.uniform(0.92, 1.12))
+                matrix_hue_jitter.append(rng.uniform(-0.010, 0.010))
+
             if cfg.kind == "minecraft":
                 c = _poly_centroid_local(poly) or (0.5 * 240.0, 0.5 * 240.0)
                 gx, gy = c
@@ -1564,18 +1529,44 @@ def main() -> None:
                 mc_flicker_freq.append(rng.uniform(0.05, 0.13))
                 mc_flicker_phase.append(rng.uniform(0.0, 1.0))
 
-    # Output sizing
-    max_dim = int(args.max_dim)
-    scale = float(max_dim) / float(max(vb_w, vb_h))
-    out_w = max(1, int(round(vb_w * scale)))
-    out_h = max(1, int(round(vb_h * scale)))
-
-    frames = int(round(float(args.duration) * int(args.fps)))
-    fps = int(args.fps)
-
+    # Render frames
     tmp_root = Path(tempfile.mkdtemp(prefix="mmxx_video_"))
     frames_dir = tmp_root / "frames"
     frames_dir.mkdir(parents=True, exist_ok=True)
+
+    def matrix_rain(idx: int, t: float) -> Tuple[float, float]:
+        if matrix_cols <= 0:
+            return (0.0, 0.0)
+        col = matrix_col_for_poly[idx]
+        ny = poly_ny[idx]
+        row = int(ny * matrix_rows) if matrix_rows > 0 else 0
+
+        best = 0.0
+        best_head = 0.0
+        drops = matrix_drops_by_col[col] if 0 <= col < len(matrix_drops_by_col) else []
+        if not drops:
+            return (0.0, 0.0)
+
+        col_f = 0.90 + 0.10 * math.sin(2.0 * math.pi * (matrix_col_flicker_freq[col] * t + matrix_col_flicker_phase[col]))
+
+        for d in drops:
+            head_pos = (d.phase + d.speed * t) % 1.0
+            dist = (ny - head_pos) % 1.0
+            if dist > d.tail:
+                continue
+
+            head_int = 1.0 - _smoothstep(0.0, d.head, dist)
+            tail_int = math.exp(-dist / (d.tail * 0.35 + 1e-6))
+
+            flick = 0.78 + 0.22 * math.sin(2.0 * math.pi * (d.flicker_freq * t + d.flicker_phase + row * 0.031))
+            stream = d.strength * max(head_int, 0.70 * tail_int) * flick * col_f
+
+            if stream > best:
+                best = stream
+            if head_int * d.strength > best_head:
+                best_head = head_int * d.strength
+
+        return (_clamp01(best), _clamp01(best_head))
 
     try:
         renderer_used = None
@@ -1624,27 +1615,10 @@ def main() -> None:
                     spec = _smoothstep(cfg.spec_edge0, 1.00, gl)
                     spec_amt = spec * cfg.spec_scale
 
-                    # Extra theme shaping that benefits from position:
                     nx = poly_nx[idx]
                     ny = poly_ny[idx]
 
-                    if args.theme == "laser-grid":
-                        # Moving grid lines (thin bright stripes) in normalized coords.
-                        freq = 9.0  # grid density
-                        speed_x = 0.14
-                        speed_y = 0.11
-                        lx = abs(math.sin(2.0 * math.pi * (nx * freq + t * speed_x)))
-                        ly = abs(math.sin(2.0 * math.pi * (ny * freq - t * speed_y)))
-                        line_x = _smoothstep(0.92, 0.995, 1.0 - lx)
-                        line_y = _smoothstep(0.92, 0.995, 1.0 - ly)
-                        grid = max(line_x, line_y)
-                        # Use grid to push glints / spec without turning everything white.
-                        gl = _clamp01(gl + 0.55 * grid)
-                        spec = _smoothstep(cfg.spec_edge0, 1.00, gl)
-                        spec_amt = _clamp01(spec * cfg.spec_scale + 0.20 * grid)
-
                     if args.theme == "snow":
-                        # Slow drifting sparkle bands (like soft snowfall glimmer)
                         drift = 0.5 + 0.5 * math.sin(2.0 * math.pi * (t * 0.08 + nx * 2.2 + ny * 5.1))
                         frost = _smoothstep(0.80, 1.00, drift) * _smoothstep(0.35, 1.00, gl)
                         spec_amt = _clamp01(spec_amt + 0.22 * frost)
@@ -1702,7 +1676,38 @@ def main() -> None:
                         poly.set("fill", _rgb_to_hex(rgb))
                         continue
 
-                    # hsv_body materials
+                    # ---- HSV body materials ----
+                    if args.theme == "matrix":
+                        rain, head = matrix_rain(idx, t)
+                        row = int(ny * matrix_rows) if matrix_rows > 0 else 0
+                        row_step = (row % 6) / 5.0
+
+                        v_base = 0.02 + 0.10 * (tone ** 2.0)
+                        v = _clamp01(v_base + 0.96 * (rain ** 1.0))
+                        v = _clamp01(v * (0.90 + 0.10 * row_step))
+
+                        s = _clamp01((0.78 + 0.22 * rain) * matrix_sat_jitter[idx])
+
+                        h = (120/360.0
+                             + matrix_col_hue_off[matrix_col_for_poly[idx]]
+                             + matrix_hue_jitter[idx]
+                             - 0.018 * head) % 1.0
+
+                        flick = 0.88 + 0.12 * math.sin(2.0 * math.pi * (0.9 * t + matrix_col_for_poly[idx] * 0.037 + row * 0.011))
+                        v = _clamp01(v * flick)
+
+                        rgb = _hsv01_to_rgb255(h, s, v)
+                        rgb = mix_to_white(rgb, global_amb)
+
+                        head_mix = _clamp01(0.10 * spec_amt + 0.42 * head)
+                        rgb = _mix_rgb(rgb, (255, 255, 255), head_mix * 0.55)
+
+                        if head > 0.55:
+                            rgb = _mix_rgb(rgb, _hsv01_to_rgb255((h + 0.08) % 1.0, 0.55, 1.0), (head - 0.55) * 0.25)
+
+                        poly.set("fill", _rgb_to_hex(rgb))
+                        continue
+
                     h0 = poly_body_hue[idx]
                     h = (h0 + cfg.hue_tone_amp * (tone - 0.5) + cfg.hue_shimmer_amp * (shim - 0.5)) % 1.0
 
@@ -1714,25 +1719,7 @@ def main() -> None:
                     s = s0 * (1.0 + cfg.sat_dark_boost * (1.0 - tone))
                     s = _clamp01(s)
 
-                    # Theme-specific hue/value shaping (still respects the theme palette feel)
-                    if args.theme == "holographic":
-                        h = (h + 0.28 * (nx - 0.5) + 0.18 * (ny - 0.5) +
-                             0.06 * math.sin(2.0 * math.pi * (0.08 * t + nx * 0.7 + ny * 0.4))) % 1.0
-                        s = _clamp01(s * (1.0 + 0.22 * (shim - 0.5)))
-                        v = _clamp01(v + 0.06 * (shim - 0.5))
-
-                    if args.theme == "sunset":
-                        h = (h + 0.10 * (1.0 - ny) + 0.02 * math.sin(2.0 * math.pi * (0.05 * t + nx))) % 1.0
-                        v = _clamp01(v + 0.07 * (1.0 - ny))
-
-                    if args.theme == "laser-grid":
-                        # Keep bodies darker but let gridlines pop.
-                        # (spec_amt/gl already boosted above)
-                        s = _clamp01(s * (1.0 + 0.18 * _smoothstep(0.55, 1.0, spec_amt)))
-                        v = _clamp01(v + 0.10 * _smoothstep(0.55, 1.0, spec_amt))
-
                     if args.theme == "snow":
-                        # De-saturate sparkles further; keep cold tint
                         s = _clamp01(s * (0.95 - 0.25 * _smoothstep(0.55, 1.0, spec_amt)))
 
                     body3 = _hsv01_to_rgb255(h, s, v)
@@ -1751,7 +1738,7 @@ def main() -> None:
                         tw = _mix_rgb(fire_rgb, (255, 255, 255), poly_fire_white_mix[idx])
                         rgb = _mix_rgb(body3, tw, spec_amt)
                     else:
-                        hb, sb, vb = _rgb255_to_hsv01(body3)
+                        hb, sb, _vb = _rgb255_to_hsv01(body3)
                         hb2 = (hb + cfg.sheen_hue_shift + 0.010 * (shim - 0.5)) % 1.0
                         sb2 = _clamp01(sb * (1.0 + cfg.sheen_sat_boost))
                         sheen_rgb = _hsv01_to_rgb255(hb2, sb2, 1.0)
