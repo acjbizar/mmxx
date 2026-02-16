@@ -111,6 +111,9 @@ def get_theme_config(theme: str) -> ThemeConfig:
     if theme == "fireworks":
         return ThemeConfig(kind="fireworks")
 
+    if theme == "nuke":
+        return ThemeConfig(kind="nuke")
+
     common = dict(
         kind="hsv",
         amb_base=0.06,

@@ -35,7 +35,7 @@ def facet_shimmer(t: float, freq: float, phase: float) -> float:
     return clamp01(s ** 2.0)
 
 def make_pulses(rng: random.Random, duration: float, theme: str) -> List[Pulse]:
-    if theme in {"deidee", "matrix", "heart", "static", "champagne", "camo", "fireworks", "gif"}:
+    if theme in {"deidee", "matrix", "heart", "static", "champagne", "camo", "fireworks", "nuke", "gif"}:
         return []
 
     if theme != "classic":

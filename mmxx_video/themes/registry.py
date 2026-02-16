@@ -16,6 +16,7 @@ from .champagne import ChampagneTheme
 from .camo import CamoTheme
 from .fireworks import FireworksTheme
 from .gif import GifTheme
+from .nuke import NukeTheme
 
 THEME_CHOICES = [
     "classic", "diamond",
@@ -33,6 +34,7 @@ THEME_CHOICES = [
     "champagne",
     "camo",
     "fireworks",
+    "nuke",
 ]
 
 def create_theme(*, scene: Scene, args: Any, rng: random.Random) -> Theme:
@@ -63,5 +65,7 @@ def create_theme(*, scene: Scene, args: Any, rng: random.Random) -> Theme:
         return CamoTheme.create(scene=scene, args=args, rng=rng)
     if cfg.kind == "fireworks":
         return FireworksTheme.create(scene=scene, args=args, rng=rng)
+    if cfg.kind == "nuke":
+        return NukeTheme.create(scene=scene, args=args, rng=rng)
 
     raise ValueError(f"Theme kind not wired in registry: {cfg.kind!r}")
