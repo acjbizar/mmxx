@@ -39,3 +39,14 @@ Constructivist typeface.
 ## Logo
 
 ![Logo](src/logo.svg)
+
+## Tools
+
+### Generate Video
+
+```bash
+python tools/generate-video.py --char a --theme classic
+python tools/generate-video.py --chars abcd --theme diamond --gap 1
+python tools/generate-video.py --char a --theme camo
+python tools/generate-video.py --char a --gif some.gif
+```
