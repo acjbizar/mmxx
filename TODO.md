@@ -2,6 +2,8 @@
 # TODO
 
 - [ ] Consider animating transition between characters.
+- [ ] Restore animations that looked better before (like `fireworks` and `minecraft`).
+- [ ] Build overlays for _Instagram_ posts.
 
 # Done
 
