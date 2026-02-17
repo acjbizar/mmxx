@@ -76,7 +76,9 @@ def build_arg_parser() -> argparse.ArgumentParser:
     ap.add_argument("--color", type=str, default="", help="Override base color (CSS color).")
     ap.add_argument("--bgcolor", type=str, default="", help="Override background color (CSS color).")
     ap.add_argument("--gif", type=str, default="", help="Use an image from data/ as a theme source (colors + animation).")
-    ap.add_argument("--theme", type=str, default="classic", choices=THEME_CHOICES, help="Animation theme.")
+    ap.add_argument("--theme", type=str, default="none", choices=THEME_CHOICES, help="Theme (default: none = no animation).")
+    ap.add_argument("--to", nargs="?", const="white", default=None, help="Animate polygons toward a target color using the default pulse animation (e.g. --to or --to=yellow).")
+    ap.add_argument("--only", type=str, default=None, help="In --chars mode, apply the chosen theme only to 1-based glyph index(es): --only=2 or --only=2,4")
     ap.add_argument("--minecraft-texture", type=str, default="",
                     help="Minecraft theme only: path or URL to texture PNG (defaults to wiki URL).")
     ap.add_argument("--duration", type=float, default=12.0, help="Duration in seconds (default: 12).")

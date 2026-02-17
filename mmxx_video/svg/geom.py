@@ -80,3 +80,21 @@ def centroid_in_glyph_norm(poly: etree._Element, root_vb: Tuple[float, float, fl
     nx = (c[0] - minx) / vbw if vbw > 0 else 0.5
     ny = (c[1] - miny) / vbh if vbh > 0 else 0.5
     return (clamp01(nx), clamp01(ny))
+
+
+def glyph_index_for_element(el: etree._Element, default: int = -1) -> int:
+    """Return 1-based glyph index for elements inside a logo grid.
+
+    The logo builder stamps groups with data-glyph-index="1..N".
+    For single-character renders (no grid), this will return `default`.
+    """
+    cur = el
+    while cur is not None and isinstance(cur.tag, str):
+        v = (cur.get("data-glyph-index") or "").strip()
+        if v:
+            try:
+                return int(v)
+            except Exception:
+                return default
+        cur = cur.getparent()
+    return default

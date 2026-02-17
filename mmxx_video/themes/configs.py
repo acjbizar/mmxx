@@ -64,6 +64,12 @@ def _cfg_merge(common: Dict, specific: Dict) -> ThemeConfig:
     return ThemeConfig(**merged)
 
 def get_theme_config(theme: str) -> ThemeConfig:
+    if theme == "none":
+        return ThemeConfig(kind="none")
+
+    if theme == "clouds":
+        return ThemeConfig(kind="clouds")
+
     if theme == "classic":
         return ThemeConfig(kind="classic")
 

@@ -66,6 +66,7 @@ def build_logo_svg_from_chars_grid(char_svgs: List[Path], grid_n: int, gap_flag:
         group.set("data-miny", str(miny))
         group.set("data-vbw", str(vbw))
         group.set("data-vbh", str(vbh))
+        group.set("data-glyph-index", str(idx + 1))
         group.set("transform", f"translate({tx},{ty})")
         svg.append(group)
 

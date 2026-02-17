@@ -45,8 +45,21 @@ Constructivist typeface.
 ### Generate Video
 
 ```bash
-python tools/generate-video.py --char a --theme classic
-python tools/generate-video.py --chars abcd --theme diamond --gap 1
-python tools/generate-video.py --char a --theme camo
-python tools/generate-video.py --char a --gif some.gif
+# default: NO animation (static video)
+python tools/generate-video.py --char=a
+
+# animate toward white (default)
+python tools/generate-video.py --char=a --to
+
+# animate toward yellow
+python tools/generate-video.py --char=a --to=yellow
+
+# apply clouds theme
+python tools/generate-video.py --chars=test --theme=clouds
+
+# apply a theme only to the 2nd character (e in "test")
+python tools/generate-video.py --chars=test --theme=matrix --only=2
+
+# apply only to multiple characters (2nd and 4th)
+python tools/generate-video.py --chars=test --theme=valentines --only=2,4
 ```
