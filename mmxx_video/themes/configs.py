@@ -197,6 +197,8 @@ def get_theme_config(theme: str) -> ThemeConfig:
             fire_sat_peak_min=0.65, fire_sat_peak_max=1.00,
         ))
 
+    # "matrix" should be the code-rain theme (falling bright heads + trailing tails).
+    # The visuals are implemented in themes/matrix.py and selected by kind="matrix".
     if theme == "matrix":
         return ThemeConfig(kind="matrix")
 

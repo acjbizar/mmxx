@@ -42,6 +42,7 @@ class Scene:
 
     base_rgbs: List[RGB]
     override_hsv: Optional[Tuple[float, float, float]]
+    override_hsv_per_poly: List[Optional[Tuple[float, float, float]]]
     bgcolor: Optional[str]
 
     pulses_per_poly: List[List[Pulse]]
@@ -73,9 +74,52 @@ class Scene:
             poly_glyph_idx=[self.poly_glyph_idx[i] for i in idxs],
             base_rgbs=[self.base_rgbs[i] for i in idxs],
             override_hsv=self.override_hsv,
+            override_hsv_per_poly=[self.override_hsv_per_poly[i] for i in idxs],
             bgcolor=self.bgcolor,
             pulses_per_poly=[self.pulses_per_poly[i] for i in idxs],
         )
+
+
+def _flatten_colors_args(values: Optional[List[str]]) -> List[str]:
+    """Accept either space-separated values (argparse nargs='+') or comma-separated lists."""
+    if not values:
+        return []
+    out: List[str] = []
+    for v in values:
+        v = (v or "").strip()
+        if not v:
+            continue
+        out.extend([p.strip() for p in v.split(",") if p.strip()])
+    return out
+
+
+def _build_glyph_color_overrides(colors: List[str], n_glyphs: int) -> List[Optional[RGB]]:
+    """Return list where index is 1-based glyph index; index 0 unused."""
+
+    def _is_skip(tok: str) -> bool:
+        t = (tok or "").strip().lower()
+        return t in {"-", "none", "null", "skip", ""}
+
+    if not colors:
+        return [None] * (n_glyphs + 1)
+
+    if len(colors) == 1:
+        tok = colors[0]
+        if _is_skip(tok):
+            return [None] * (n_glyphs + 1)
+        rgb = parse_css_color_to_rgb(tok)
+        return [None] + [rgb for _ in range(n_glyphs)]
+
+    if len(colors) != n_glyphs:
+        raise SystemExit(
+            f"--colors must provide either 1 color (apply to all glyphs) or exactly {n_glyphs} colors (one per glyph). "
+            f"Got {len(colors)}."
+        )
+
+    out: List[Optional[RGB]] = [None] * (n_glyphs + 1)
+    for i, tok in enumerate(colors, start=1):
+        out[i] = None if _is_skip(tok) else parse_css_color_to_rgb(tok)
+    return out
 
 
 def apply_bgcolor_override(doc: etree._Element, vb_tuple: Tuple[float, float, float, float], bgcolor: str) -> None:
@@ -146,11 +190,28 @@ def build_scene_from_args(*, args, rng: random.Random, svg_doc: etree._Element, 
         base_rgb_override = parse_css_color_to_rgb(override_color)
         override_hsv = rgb255_to_hsv01(base_rgb_override)
 
+    # Per-glyph color overrides (primarily useful for --chars)
+    n_glyphs = max([g for g in poly_glyph_idx if g > 0], default=1)
+    colors_tokens = _flatten_colors_args(getattr(args, "colors", None))
+    glyph_overrides = _build_glyph_color_overrides(colors_tokens, n_glyphs)
+
     base_rgbs: List[RGB] = []
-    for p in polys:
+    override_hsv_per_poly: List[Optional[Tuple[float, float, float]]] = []
+    for idx, p in enumerate(polys):
+        gi = poly_glyph_idx[idx]
+        ov_rgb: Optional[RGB] = glyph_overrides[gi] if (gi > 0 and gi < len(glyph_overrides)) else None
+
+        if ov_rgb is not None:
+            base_rgbs.append(ov_rgb)
+            override_hsv_per_poly.append(rgb255_to_hsv01(ov_rgb))
+            continue
+
+        override_hsv_per_poly.append(None)
+
         if base_rgb_override is not None:
             base_rgbs.append(base_rgb_override)
             continue
+
         fill = resolve_fill(p) or "#000"
         try:
             base_rgbs.append(parse_css_color_to_rgb(fill))
@@ -191,6 +252,7 @@ def build_scene_from_args(*, args, rng: random.Random, svg_doc: etree._Element, 
         poly_glyph_idx=poly_glyph_idx,
         base_rgbs=base_rgbs,
         override_hsv=override_hsv,
+        override_hsv_per_poly=override_hsv_per_poly,
         bgcolor=bgcolor,
         pulses_per_poly=pulses_per_poly,
     )

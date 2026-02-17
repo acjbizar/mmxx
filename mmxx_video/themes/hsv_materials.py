@@ -65,6 +65,7 @@ class HSVTheme:
         assert cfg.kind == "hsv"
 
         override_hsv: Optional[tuple] = getattr(scene, "override_hsv", None)
+        override_hsv_per_poly = getattr(scene, "override_hsv_per_poly", None)
 
         poly: List[PolyHSV] = []
         for _i in range(scene.n_polys):
@@ -82,8 +83,15 @@ class HSVTheme:
             shimmer_phase = rng.uniform(0.0, 1.0)
 
             # ---- body hue/sat ----
-            if override_hsv is not None:
-                h0, s0, _v0 = override_hsv
+            # Per-poly override (from --colors) takes precedence over global --color
+            ov = None
+            if isinstance(override_hsv_per_poly, list) and _i < len(override_hsv_per_poly):
+                ov = override_hsv_per_poly[_i]
+            if ov is None:
+                ov = override_hsv
+
+            if ov is not None:
+                h0, s0, _v0 = ov
                 body_hue = float(h0)
                 body_sat = max(
                     cfg.body_sat_min,

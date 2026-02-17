@@ -74,6 +74,16 @@ def build_arg_parser() -> argparse.ArgumentParser:
     ap.add_argument("--gap", type=int, default=0, choices=[0, 1],
                     help="Logo spacing (only for --chars): 0 = no gaps (default), 1 = pad+gap = 1/8 of cell size.")
     ap.add_argument("--color", type=str, default="", help="Override base color (CSS color).")
+    ap.add_argument(
+        "--colors",
+        nargs="+",
+        default=None,
+        help=(
+            "Per-glyph base color overrides (mainly for --chars). Provide either 1 color (applies to all glyphs) "
+            "or exactly N colors where N is the number of glyphs. You can pass space-separated values or a single "
+            "comma-separated string. Examples: --colors red green blue OR --colors=red,green,blue"
+        ),
+    )
     ap.add_argument("--bgcolor", type=str, default="", help="Override background color (CSS color).")
     ap.add_argument("--gif", type=str, default="", help="Use an image from data/ as a theme source (colors + animation).")
     ap.add_argument("--theme", type=str, default="none", choices=THEME_CHOICES, help="Theme (default: none = no animation).")

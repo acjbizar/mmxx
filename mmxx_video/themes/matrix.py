@@ -50,6 +50,7 @@ class MatrixTheme:
 
     @classmethod
     def create(cls, *, scene: Scene, args: Any, rng: random.Random) -> "MatrixTheme":
+        # Scene stores the SVG viewBox tuple as vb_tuple (minx, miny, width, height).
         _minx, _miny, vbw, vbh = scene.vb_tuple
 
         # Choose a stable number of columns/rows based on the SVG viewBox.

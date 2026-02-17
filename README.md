@@ -62,4 +62,7 @@ python tools/generate-video.py --chars=test --theme=matrix --only=2
 
 # apply only to multiple characters (2nd and 4th)
 python tools/generate-video.py --chars=test --theme=valentines --only=2,4
+
+# Skip one glyph (keep original for glyph 2)
+python tools/generate-video.py --chars=test --theme=classic --colors red - blue pink
 ```
