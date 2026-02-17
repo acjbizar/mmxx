@@ -12,8 +12,8 @@ from .constants import _CODEPOINT_RE, _HEX_RE
 from .svg.logo import build_logo_svg_from_chars_grid
 from .scene import build_scene_from_args
 from .themes.registry import THEME_CHOICES, create_theme
-from .pipeline import render_and_encode
-from .util import timestamped_if_exists
+from .pipeline import export_png_frames, render_and_encode
+from .util import parse_frame_spec, timestamped_if_exists
 from .export.svgjs import export_svgjs
 
 def parse_char_or_codepoint(s: str) -> Tuple[str, int, str]:
@@ -98,6 +98,22 @@ def build_arg_parser() -> argparse.ArgumentParser:
     ap.add_argument("--max-dim", type=int, default=1080, help="Render so max(viewBox w,h) becomes this size (default: 1080).")
     ap.add_argument("--seed", type=int, default=None, help="Random seed for repeatable animation.")
     ap.add_argument("--keep-frames", action="store_true", help="Keep rendered PNG frames (for debugging).")
+
+    ap.add_argument(
+        "--png",
+        type=str,
+        default="",
+        help=(
+            "Export specific frame(s) as PNG in addition to the normal output. "
+            "Examples: --png 0 | --png last | --png 0,10,25 | --png 0-300:10"
+        ),
+    )
+    ap.add_argument(
+        "--png-dir",
+        type=str,
+        default="",
+        help="Directory to write exported PNG frame(s) to (default: dist/videos).",
+    )
     return ap
 
 def main(argv: Optional[List[str]] = None) -> int:
@@ -162,11 +178,25 @@ def main(argv: Optional[List[str]] = None) -> int:
     )
 
     theme = create_theme(scene=scene, args=args, rng=rng)
+
+    png_frames = parse_frame_spec(args.png, scene.frames) if (args.png or "").strip() else []
+    png_dir = Path(args.png_dir).expanduser() if (args.png_dir or "").strip() else None
+
     if args.export == "svgjs":
         export_svgjs(scene, theme, out_file, duration=float(args.duration), fps_hint=int(args.fps))
+        if png_frames:
+            export_png_frames(scene=scene, theme=theme, out_stem=out_file.stem, out_dir=(png_dir or out_dir), frames=png_frames)
         renderer = "svgjs"
     else:
-        out_file, renderer = render_and_encode(scene=scene, theme=theme, out_file=out_file, ext=args.ext.lower(), keep_frames=bool(args.keep_frames))
+        out_file, renderer = render_and_encode(
+            scene=scene,
+            theme=theme,
+            out_file=out_file,
+            ext=args.ext.lower(),
+            keep_frames=bool(args.keep_frames),
+            export_png_indices=set(png_frames) if png_frames else None,
+            export_png_dir=(png_dir or out_dir) if png_frames else None,
+        )
     print(f"Output: {out_file}")
     print(f"Theme:  {'gif:' + (args.gif.strip() or '') if bool((args.gif or '').strip()) else args.theme}")
     print(f"Input:  {label}")

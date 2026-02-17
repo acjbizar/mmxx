@@ -65,4 +65,7 @@ python tools/generate-video.py --chars=test --theme=valentines --only=2,4
 
 # Skip one glyph (keep original for glyph 2)
 python tools/generate-video.py --chars=test --theme=classic --colors red - blue pink
+
+# Export first frame as PNG
+python tools/generate-video.py --chars=test --theme=clouds --png=0
 ```
