@@ -106,10 +106,26 @@ def get_theme_config(theme: str) -> ThemeConfig:
         return ThemeConfig(kind="matrix")
 
     if theme == "camo":
-        return ThemeConfig(kind="camo")
+        # Matte, low-glint fabric-ish camo. These values match the last
+        # known-good single-file generator (dark ambience, minimal spec).
+        return ThemeConfig(
+            kind="camo",
+            amb_base=0.015, amb_amp=0.020, amb_freq=0.030,
+            spec_edge0=0.72, spec_scale=0.20,
+            sheen_mix=0.00,
+            fire_prob=0.0,
+        )
 
     if theme == "fireworks":
-        return ThemeConfig(kind="fireworks")
+        # Dark base + bright additive bursts. Keep ambience low so the
+        # firework arrows/bursts read as *light* on a night sky.
+        return ThemeConfig(
+            kind="fireworks",
+            amb_base=0.010, amb_amp=0.012, amb_freq=0.040,
+            spec_edge0=0.62, spec_scale=0.35,
+            sheen_mix=0.00,
+            fire_prob=0.0,
+        )
 
     if theme == "nuke":
         return ThemeConfig(kind="nuke")
