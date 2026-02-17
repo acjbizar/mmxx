@@ -3,9 +3,6 @@
 
 - [ ] Consider animating transition between characters.
 - [ ] Build overlays for _Instagram_ posts.
-- [ ] More default animation to specific flag.
-- [ ] Allow highlight color for default animation to be set (default being white).
-- [ ] Allow setting theme to one specific character.
 
 # Done
 
@@ -46,3 +43,6 @@
 - [x] Consider inverse versions of the glyphs as alts.
 - [x] Experiment with animating the polygon colors.
 - [x] Restore animations that looked better before (like `fireworks` and `minecraft`).
+- [x] Move default animation to specific flag.
+- [x] Allow highlight color for default animation to be set (default being white).
+- [x] Allow setting theme to one specific character.
