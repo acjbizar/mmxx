@@ -1,0 +1,79 @@
+{
+  "manifestVersion": 1,
+  "generatedAt": "2026-02-17T19:31:18.009450+00:00",
+  "name": "mmxx",
+  "metadata": {
+    "family": "mmxx",
+    "subfamily": "Regular",
+    "fullName": "mmxx Regular",
+    "postScriptName": "mmxx-Regular",
+    "unitsPerEm": 1000,
+    "glyphCount": 78
+  },
+  "files": [
+    {
+      "ext": "woff2",
+      "file": "mmxx.woff2",
+      "bytes": 1656,
+      "sha256": "16d6b0ebd9ba9a8ef69f91cbe3a65f8ab8d8cff53f1125690c178cae943bcf45"
+    },
+    {
+      "ext": "woff",
+      "file": "mmxx.woff",
+      "bytes": 2548,
+      "sha256": "4f3fa92f82d074c933ba1f0be51f073fde52dbd3936ec2c6f24982605bb07641"
+    },
+    {
+      "ext": "ttf",
+      "file": "mmxx.ttf",
+      "bytes": 6096,
+      "sha256": "43d316ede8f7e329646d7b13418f818b67fd7cceef8d113f56ee21b82a721121"
+    }
+  ],
+  "unicodeRanges": [
+    [
+      32,
+      32
+    ],
+    [
+      48,
+      57
+    ],
+    [
+      97,
+      122
+    ],
+    [
+      9608,
+      9608
+    ],
+    [
+      127799,
+      127799
+    ]
+  ],
+  "counts": {
+    "codepointsTotal": 39,
+    "codepointsBMP": 38,
+    "codepointsAstral": 1
+  },
+  "features": {
+    "GSUB": [
+      "salt"
+    ],
+    "GPOS": []
+  },
+  "hints": {
+    "commonBlocks": {
+      "basicLatin": true,
+      "latin1Supplement": false,
+      "latinExtendedA": false,
+      "latinExtendedB": false
+    },
+    "notes": [
+      "unicodeRanges is derived from cmap.getBestCmap() across all parseable font files.",
+      "GSUB/GPOS feature tags are extracted when those tables exist.",
+      "Ligature contents are not enumerated here (by design); use shaping in your sample to demonstrate them."
+    ]
+  }
+}
