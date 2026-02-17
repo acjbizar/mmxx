@@ -4,6 +4,9 @@
 - [ ] Consider animating transition between characters.
 - [ ] Restore animations that looked better before (like `fireworks` and `minecraft`).
 - [ ] Build overlays for _Instagram_ posts.
+- [ ] More default animation to specific flag.
+- [ ] Allow highlight color for default animation to be set (default being white).
+- [ ] Allow setting theme to one specific character.
 
 # Done
 
