@@ -197,27 +197,8 @@ def get_theme_config(theme: str) -> ThemeConfig:
             fire_sat_peak_min=0.65, fire_sat_peak_max=1.00,
         ))
 
-    # "matrix" in the original single-file generator is an HSV material
-    # (emerald-green glass + hot glints), not the glyph-rain effect.
     if theme == "matrix":
-        return _cfg_merge(common, dict(
-            base_hue=120/360.0, hue_jitter=0.040,
-            body_sat_min=0.85, body_sat_max=1.00,
-            body_v_min=0.03, body_v_max=0.88, body_v_gamma=1.25,
-            body_sat_mul=1.12,
-            sat_dark_boost=0.22,
-            hue_tone_amp=0.006,
-            hue_shimmer_amp=0.018,
-            val_shimmer_amp=0.030,
-            spec_edge0=0.44, spec_scale=0.94,
-            sheen_mix=0.06, sheen_sat_boost=0.40, sheen_hue_shift=-0.010,
-            fire_prob=0.92,
-            fire_hues=[110/360.0, 120/360.0, 130/360.0, 95/360.0, 145/360.0],
-            fire_hue_jitter=0.06,
-            fire_sat_base_min=0.35, fire_sat_base_max=0.75,
-            fire_sat_peak_min=0.90, fire_sat_peak_max=1.00,
-            fire_white_mix_min=0.02, fire_white_mix_max=0.14,
-        ))
+        return ThemeConfig(kind="matrix")
 
     if theme == "ruby":
         return _cfg_merge(common, dict(
