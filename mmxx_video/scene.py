@@ -38,6 +38,10 @@ class Scene:
 
     pulses_per_poly: List[List[Pulse]]
 
+    @property
+    def n_polys(self) -> int:
+        return len(self.polys)
+
 def apply_bgcolor_override(doc: etree._Element, vb_tuple: Tuple[float, float, float, float], bgcolor: str) -> None:
     minx, miny, vb_w, vb_h = vb_tuple
     # remove a full-canvas <rect> if present near the top-level

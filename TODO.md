@@ -2,7 +2,6 @@
 # TODO
 
 - [ ] Consider animating transition between characters.
-- [ ] Restore animations that looked better before (like `fireworks` and `minecraft`).
 - [ ] Build overlays for _Instagram_ posts.
 - [ ] More default animation to specific flag.
 - [ ] Allow highlight color for default animation to be set (default being white).
@@ -46,3 +45,4 @@
 - [x] Add 4 character squares/logos for LOVE, MM25, ADHD, DEID, LOGO, 2222, and more?
 - [x] Consider inverse versions of the glyphs as alts.
 - [x] Experiment with animating the polygon colors.
+- [x] Restore animations that looked better before (like `fireworks` and `minecraft`).

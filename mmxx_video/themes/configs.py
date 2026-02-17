@@ -102,9 +102,6 @@ def get_theme_config(theme: str) -> ThemeConfig:
     if theme == "champagne":
         return ThemeConfig(kind="champagne")
 
-    if theme == "matrix":
-        return ThemeConfig(kind="matrix")
-
     if theme == "camo":
         # Matte, low-glint fabric-ish camo. These values match the last
         # known-good single-file generator (dark ambience, minimal spec).
@@ -194,6 +191,28 @@ def get_theme_config(theme: str) -> ThemeConfig:
             fire_sat_peak_min=0.65, fire_sat_peak_max=1.00,
         ))
 
+    # "matrix" in the original single-file generator is an HSV material
+    # (emerald-green glass + hot glints), not the glyph-rain effect.
+    if theme == "matrix":
+        return _cfg_merge(common, dict(
+            base_hue=120/360.0, hue_jitter=0.040,
+            body_sat_min=0.85, body_sat_max=1.00,
+            body_v_min=0.03, body_v_max=0.88, body_v_gamma=1.25,
+            body_sat_mul=1.12,
+            sat_dark_boost=0.22,
+            hue_tone_amp=0.006,
+            hue_shimmer_amp=0.018,
+            val_shimmer_amp=0.030,
+            spec_edge0=0.44, spec_scale=0.94,
+            sheen_mix=0.06, sheen_sat_boost=0.40, sheen_hue_shift=-0.010,
+            fire_prob=0.92,
+            fire_hues=[110/360.0, 120/360.0, 130/360.0, 95/360.0, 145/360.0],
+            fire_hue_jitter=0.06,
+            fire_sat_base_min=0.35, fire_sat_base_max=0.75,
+            fire_sat_peak_min=0.90, fire_sat_peak_max=1.00,
+            fire_white_mix_min=0.02, fire_white_mix_max=0.14,
+        ))
+
     if theme == "ruby":
         return _cfg_merge(common, dict(
             base_hue=350/360.0, hue_jitter=0.022,
@@ -201,6 +220,7 @@ def get_theme_config(theme: str) -> ThemeConfig:
             body_v_min=0.14, body_v_max=0.90, body_v_gamma=1.08,
             body_sat_mul=1.10,
             sat_dark_boost=0.30,
+            hue_tone_amp=0.010,
             hue_shimmer_amp=0.016,
             sheen_mix=0.14, sheen_sat_boost=0.30,
             fire_prob=0.46,
@@ -217,6 +237,7 @@ def get_theme_config(theme: str) -> ThemeConfig:
             body_v_min=0.16, body_v_max=0.92, body_v_gamma=1.0,
             body_sat_mul=1.08,
             sat_dark_boost=0.25,
+            hue_tone_amp=0.010,
             hue_shimmer_amp=0.016,
             sheen_mix=0.14, sheen_sat_boost=0.28,
             fire_prob=0.42,
@@ -233,6 +254,7 @@ def get_theme_config(theme: str) -> ThemeConfig:
             body_v_min=0.14, body_v_max=0.90, body_v_gamma=1.08,
             body_sat_mul=1.10,
             sat_dark_boost=0.28,
+            hue_tone_amp=0.010,
             hue_shimmer_amp=0.018,
             sheen_mix=0.14, sheen_sat_boost=0.30,
             fire_prob=0.44,
@@ -249,6 +271,7 @@ def get_theme_config(theme: str) -> ThemeConfig:
             body_v_min=0.14, body_v_max=0.90, body_v_gamma=1.08,
             body_sat_mul=1.10,
             sat_dark_boost=0.28,
+            hue_tone_amp=0.010,
             hue_shimmer_amp=0.018,
             sheen_mix=0.14, sheen_sat_boost=0.30,
             fire_prob=0.44,
@@ -285,6 +308,7 @@ def get_theme_config(theme: str) -> ThemeConfig:
             body_v_min=0.12, body_v_max=0.90, body_v_gamma=1.08,
             body_sat_mul=1.10,
             sat_dark_boost=0.38,
+            hue_tone_amp=0.012,
             hue_shimmer_amp=0.020,
             val_shimmer_amp=0.030,
             spec_edge0=0.46, spec_scale=0.92,
@@ -305,6 +329,7 @@ def get_theme_config(theme: str) -> ThemeConfig:
             body_v_min=0.18, body_v_max=0.96, body_v_gamma=0.95,
             body_sat_mul=1.08,
             sat_dark_boost=0.16,
+            hue_tone_amp=0.010,
             hue_shimmer_amp=0.020,
             val_shimmer_amp=0.040,
             spec_edge0=0.52, spec_scale=0.92,
@@ -325,6 +350,7 @@ def get_theme_config(theme: str) -> ThemeConfig:
             body_v_min=0.22, body_v_max=0.98, body_v_gamma=0.95,
             body_sat_mul=1.10,
             sat_dark_boost=0.18,
+            hue_tone_amp=0.012,
             hue_shimmer_amp=0.028,
             val_shimmer_amp=0.045,
             spec_edge0=0.50, spec_scale=0.92,
@@ -344,6 +370,7 @@ def get_theme_config(theme: str) -> ThemeConfig:
             body_v_min=0.10, body_v_max=1.00, body_v_gamma=0.90,
             body_sat_mul=1.00,
             sat_dark_boost=0.05,
+            hue_tone_amp=0.004,
             hue_shimmer_amp=0.010,
             val_shimmer_amp=0.055,
             spec_edge0=0.52, spec_scale=0.96,

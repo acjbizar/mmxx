@@ -284,4 +284,3 @@ class FireworksTheme:
             rgb = mix_to_white(rgb, amb * 0.04)
             # Scene polygons are lxml elements; set SVG attribute.
             poly.set("fill", rgb_to_hex(rgb))
-

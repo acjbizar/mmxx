@@ -4,7 +4,6 @@ import math
 import random
 import re
 from pathlib import Path
-from .export.svgjs import export_svgjs
 from typing import List, Tuple, Optional
 
 from lxml import etree
@@ -15,6 +14,7 @@ from .scene import build_scene_from_args
 from .themes.registry import THEME_CHOICES, create_theme
 from .pipeline import render_and_encode
 from .util import timestamped_if_exists
+from .export.svgjs import export_svgjs
 
 def parse_char_or_codepoint(s: str) -> Tuple[str, int, str]:
     raw = (s or "").strip()
