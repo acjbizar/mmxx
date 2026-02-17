@@ -15,8 +15,8 @@ from .matrix import MatrixTheme
 from .champagne import ChampagneTheme
 from .camo import CamoTheme
 from .fireworks import FireworksTheme
-from .gif import GifTheme
 from .nuke import NukeTheme
+from .gif import GifTheme
 
 THEME_CHOICES = [
     "classic", "diamond",

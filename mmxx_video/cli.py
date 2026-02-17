@@ -4,6 +4,7 @@ import math
 import random
 import re
 from pathlib import Path
+from .export.svgjs import export_svgjs
 from typing import List, Tuple, Optional
 
 from lxml import etree
@@ -81,6 +82,7 @@ def build_arg_parser() -> argparse.ArgumentParser:
     ap.add_argument("--duration", type=float, default=12.0, help="Duration in seconds (default: 12).")
     ap.add_argument("--fps", type=int, default=30, help="Frames per second (default: 30).")
     ap.add_argument("--ext", type=str, default="mp4", help="Output extension: mp4 or webm (default: mp4).")
+    ap.add_argument("--export", type=str, default="video", choices=["video", "svgjs"], help="Export type: video (default) or self-contained SVG+JS.")
     ap.add_argument("--max-dim", type=int, default=1080, help="Render so max(viewBox w,h) becomes this size (default: 1080).")
     ap.add_argument("--seed", type=int, default=None, help="Random seed for repeatable animation.")
     ap.add_argument("--keep-frames", action="store_true", help="Keep rendered PNG frames (for debugging).")
@@ -132,6 +134,9 @@ def main(argv: Optional[List[str]] = None) -> int:
         label = f"logo {shown!r} ({grid_n}x{grid_n}, gap={args.gap}, {prefix})"
         is_logo = True
 
+    if args.export == "svgjs":
+        out_file = out_file.with_suffix(".svg")
+
     out_file = timestamped_if_exists(out_file)
 
     rng = random.Random(args.seed)
@@ -145,8 +150,11 @@ def main(argv: Optional[List[str]] = None) -> int:
     )
 
     theme = create_theme(scene=scene, args=args, rng=rng)
-    out_file, renderer = render_and_encode(scene=scene, theme=theme, out_file=out_file, ext=args.ext.lower(), keep_frames=bool(args.keep_frames))
-
+    if args.export == "svgjs":
+        export_svgjs(scene, theme, out_file, duration=float(args.duration), fps_hint=int(args.fps))
+        renderer = "svgjs"
+    else:
+        out_file, renderer = render_and_encode(scene=scene, theme=theme, out_file=out_file, ext=args.ext.lower(), keep_frames=bool(args.keep_frames))
     print(f"Output: {out_file}")
     print(f"Theme:  {'gif:' + (args.gif.strip() or '') if bool((args.gif or '').strip()) else args.theme}")
     print(f"Input:  {label}")
