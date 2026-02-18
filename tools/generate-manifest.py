@@ -5,17 +5,22 @@ tools/generate-manifest.py
 
 Generate a universal, JSON font manifest from dist/fonts/{name}.{ext} files.
 
-Outputs:
+Output (only):
   - data/manifest.json
-  - dist/fonts/{name}.manifest.json
 
-The manifest is derived from:
-  - cmap (Unicode coverage)
-  - GSUB/GPOS feature tags (when present)
-  - basic font metadata (name table, unitsPerEm, glyph count)
-  - per-file hashes/sizes
+Notes on naming:
+- We canonicalize the manifest "name" to lowercase.
+- We *prefer* lowercase font filenames (e.g. dist/fonts/mmxx.woff2).
+- If files exist with different casing, we still find them (case-insensitive) and:
+  - record the actual filename in files[].file (so it remains correct)
+  - record the recommended lowercase filename in files[].recommendedFile
+  - emit a warning on stdout
 
 Usage:
+  # simplest: set DEFAULT_NAME below, then run:
+  python tools/generate-manifest.py
+
+  # or override:
   python tools/generate-manifest.py --name mmxx
 """
 
@@ -28,10 +33,16 @@ import os
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Dict, List, Optional, Set, Tuple
+from typing import Dict, List, Optional, Set
+
 
 from fontTools.ttLib import TTFont
 
+
+# =========================
+# Config
+# =========================
+DEFAULT_NAME = "MMXX"  # <-- set your default font base-name here (WITHOUT extension), lowercase recommended
 
 EXTS = ["woff2", "woff", "ttf", "otf"]  # look for these in dist/fonts
 PREFERRED_PARSE_ORDER = ["ttf", "otf", "woff2", "woff"]  # for metadata extraction
@@ -44,6 +55,7 @@ class FontFileInfo:
     size: int
     sha256: str
     parse_error: Optional[str] = None
+    recommended_file: Optional[str] = None  # lowercase recommendation (relative to dist/fonts)
 
 
 def sha256_file(path: Path, chunk_size: int = 1024 * 1024) -> str:
@@ -58,9 +70,7 @@ def sha256_file(path: Path, chunk_size: int = 1024 * 1024) -> str:
 
 
 def compress_to_ranges(codepoints: List[int]) -> List[List[int]]:
-    """
-    Compress sorted codepoints into inclusive [start, end] ranges.
-    """
+    """Compress sorted codepoints into inclusive [start, end] ranges."""
     if not codepoints:
         return []
     cps = sorted(set(codepoints))
@@ -76,24 +86,25 @@ def compress_to_ranges(codepoints: List[int]) -> List[List[int]]:
     return ranges
 
 
-def safe_get_name(tt: TTFont, name_id: int, platform_id: int = 3, enc_id: int = 1, lang_id: int = 0x0409) -> Optional[str]:
-    """
-    Try a few reasonable fallbacks to get a readable string from the 'name' table.
-    """
+def safe_get_name(tt: TTFont, name_id: int) -> Optional[str]:
+    """Best-effort string from the 'name' table."""
     if "name" not in tt:
         return None
 
     name_tbl = tt["name"]
 
     # Try Windows Unicode English (US)
-    n = name_tbl.getName(name_id, platform_id, enc_id, lang_id)
+    n = name_tbl.getName(name_id, 3, 1, 0x0409)
     if n:
         try:
-            return str(n)
+            return n.toUnicode()
         except Exception:
-            pass
+            try:
+                return str(n)
+            except Exception:
+                pass
 
-    # Try any record with this nameID
+    # Fallback: first record with this nameID
     for rec in name_tbl.names:
         if rec.nameID == name_id:
             try:
@@ -107,9 +118,7 @@ def safe_get_name(tt: TTFont, name_id: int, platform_id: int = 3, enc_id: int = 
 
 
 def extract_feature_tags(tt: TTFont, table_tag: str) -> List[str]:
-    """
-    Extract Feature tags from GSUB/GPOS.
-    """
+    """Extract Feature tags from GSUB/GPOS."""
     if table_tag not in tt:
         return []
     try:
@@ -117,14 +126,17 @@ def extract_feature_tags(tt: TTFont, table_tag: str) -> List[str]:
         fl = getattr(table, "FeatureList", None)
         if not fl or not getattr(fl, "FeatureRecord", None):
             return []
-        tags = [fr.FeatureTag for fr in fl.FeatureRecord if getattr(fr, "FeatureTag", None)]
+        tags = [
+            fr.FeatureTag
+            for fr in fl.FeatureRecord
+            if getattr(fr, "FeatureTag", None)
+        ]
         return sorted(set(tags))
     except Exception:
         return []
 
 
 def parse_font(path: Path) -> TTFont:
-    # Keep parsing as "light" as possible (fast & consistent)
     return TTFont(
         str(path),
         recalcBBoxes=False,
@@ -133,14 +145,50 @@ def parse_font(path: Path) -> TTFont:
     )
 
 
-def find_font_files(dist_fonts_dir: Path, name: str) -> List[FontFileInfo]:
+def _case_insensitive_lookup(dist_fonts_dir: Path, want_filename: str) -> Optional[Path]:
+    """
+    Find a file in dist_fonts_dir by case-insensitive name match.
+    Returns the actual path if found, else None.
+    """
+    want_lc = want_filename.lower()
+    if not dist_fonts_dir.exists():
+        return None
+    for p in dist_fonts_dir.iterdir():
+        if p.is_file() and p.name.lower() == want_lc:
+            return p
+    return None
+
+
+def find_font_files(dist_fonts_dir: Path, name_lc: str) -> List[FontFileInfo]:
+    """
+    Prefer exact lowercase match {name_lc}.{ext}.
+    If not found, try case-insensitive lookup and record recommendations.
+    """
     found: List[FontFileInfo] = []
+
     for ext in EXTS:
-        p = dist_fonts_dir / f"{name}.{ext}"
-        if p.exists() and p.is_file():
-            size = p.stat().st_size
-            digest = sha256_file(p)
-            found.append(FontFileInfo(path=p, ext=ext, size=size, sha256=digest))
+        expected = f"{name_lc}.{ext}"
+        expected_path = dist_fonts_dir / expected
+
+        actual_path: Optional[Path] = None
+        if expected_path.exists() and expected_path.is_file():
+            actual_path = expected_path
+        else:
+            actual_path = _case_insensitive_lookup(dist_fonts_dir, expected)
+
+        if actual_path and actual_path.exists() and actual_path.is_file():
+            size = actual_path.stat().st_size
+            digest = sha256_file(actual_path)
+
+            info = FontFileInfo(
+                path=actual_path,
+                ext=ext,
+                size=size,
+                sha256=digest,
+                recommended_file=expected,  # always lowercase recommendation
+            )
+            found.append(info)
+
     return found
 
 
@@ -152,8 +200,18 @@ def choose_primary_parse_file(files: List[FontFileInfo]) -> Optional[FontFileInf
     return files[0] if files else None
 
 
-def build_manifest(name: str, files: List[FontFileInfo], repo_root: Path) -> Dict:
-    # Try parsing each file; union cmap coverage; union feature tags.
+def _range_intersects(ranges: List[List[int]], lo: int, hi: int) -> bool:
+    # ranges are inclusive [a,b] and sorted
+    for a, b in ranges:
+        if b < lo:
+            continue
+        if a > hi:
+            return False
+        return True
+    return False
+
+
+def build_manifest(name_lc: str, files: List[FontFileInfo], repo_root: Path) -> Dict:
     cmap_codepoints: Set[int] = set()
     gsub_tags: Set[str] = set()
     gpos_tags: Set[str] = set()
@@ -169,15 +227,14 @@ def build_manifest(name: str, files: List[FontFileInfo], repo_root: Path) -> Dic
         "glyphCount": None,
     }
 
-    # Parse primary first for metadata
+    # Parse primary first for metadata + initial coverage/features
     if primary_info:
         try:
             tt = parse_font(primary_info.path)
 
-            # Metadata (best-effort)
-            meta["family"] = safe_get_name(tt, 1)  # Font Family
-            meta["subfamily"] = safe_get_name(tt, 2)  # Subfamily
-            meta["fullName"] = safe_get_name(tt, 4)  # Full font name
+            meta["family"] = safe_get_name(tt, 1)          # Font Family
+            meta["subfamily"] = safe_get_name(tt, 2)       # Subfamily
+            meta["fullName"] = safe_get_name(tt, 4)        # Full name
             meta["postScriptName"] = safe_get_name(tt, 6)  # PostScript name
 
             try:
@@ -190,12 +247,10 @@ def build_manifest(name: str, files: List[FontFileInfo], repo_root: Path) -> Dic
             except Exception:
                 meta["glyphCount"] = None
 
-            # cmap union from primary
             if "cmap" in tt:
                 best = tt["cmap"].getBestCmap() or {}
                 cmap_codepoints.update(best.keys())
 
-            # features from primary
             gsub_tags.update(extract_feature_tags(tt, "GSUB"))
             gpos_tags.update(extract_feature_tags(tt, "GPOS"))
 
@@ -203,7 +258,7 @@ def build_manifest(name: str, files: List[FontFileInfo], repo_root: Path) -> Dic
         except Exception as e:
             primary_info.parse_error = f"{type(e).__name__}: {e}"
 
-    # Parse the rest for coverage/features union (best-effort)
+    # Parse the rest for union coverage/features (best-effort)
     for info in files:
         if primary_info and info.path == primary_info.path:
             continue
@@ -221,31 +276,12 @@ def build_manifest(name: str, files: List[FontFileInfo], repo_root: Path) -> Dic
         except Exception as e:
             info.parse_error = f"{type(e).__name__}: {e}"
 
-    # Build file map for CDN-relative paths (dist/fonts/...)
-    dist_fonts_dir = repo_root / "dist" / "fonts"
-    file_entries = []
-    for info in sorted(files, key=lambda x: EXTS.index(x.ext)):
-        rel = info.path.relative_to(dist_fonts_dir) if info.path.is_relative_to(dist_fonts_dir) else info.path.name
-        file_entries.append(
-            {
-                "ext": info.ext,
-                "file": str(rel).replace("\\", "/"),
-                "bytes": info.size,
-                "sha256": info.sha256,
-                **({"parseError": info.parse_error} if info.parse_error else {}),
-            }
-        )
-
     ranges = compress_to_ranges(sorted(cmap_codepoints))
 
-    # Minimal but useful summary stats
-    total_codepoints = len(set(cmap_codepoints))
+    total_codepoints = len(cmap_codepoints)
     bmp_codepoints = sum(1 for cp in cmap_codepoints if 0x0000 <= cp <= 0xFFFF)
     astral_codepoints = total_codepoints - bmp_codepoints
 
-    # Also provide a few convenience "well-known" blocks (optional)
-    # This is intentionally tiny; the authoritative coverage is unicodeRanges.
-    # You can expand this later if you want.
     common_blocks = {
         "basicLatin": _range_intersects(ranges, 0x0020, 0x007E),
         "latin1Supplement": _range_intersects(ranges, 0x00A0, 0x00FF),
@@ -253,10 +289,38 @@ def build_manifest(name: str, files: List[FontFileInfo], repo_root: Path) -> Dic
         "latinExtendedB": _range_intersects(ranges, 0x0180, 0x024F),
     }
 
-    manifest = {
+    dist_fonts_dir = repo_root / "dist" / "fonts"
+    file_entries = []
+    # Keep predictable order by EXTS
+    for info in sorted(files, key=lambda x: EXTS.index(x.ext)):
+        # actual file relative to dist/fonts (correct path)
+        try:
+            rel_actual = info.path.relative_to(dist_fonts_dir).as_posix()
+        except Exception:
+            rel_actual = info.path.name
+
+        entry = {
+            "ext": info.ext,
+            "file": rel_actual,
+            "recommendedFile": info.recommended_file or f"{name_lc}.{info.ext}",
+            "bytes": info.size,
+            "sha256": info.sha256,
+        }
+        if info.parse_error:
+            entry["parseError"] = info.parse_error
+
+        file_entries.append(entry)
+
+    casing_mismatches = [
+        e for e in file_entries
+        if e.get("file", "").lower() != e.get("recommendedFile", "").lower()
+        or e.get("file", "") != e.get("recommendedFile", "")
+    ]
+
+    return {
         "manifestVersion": 1,
         "generatedAt": datetime.now(timezone.utc).isoformat(),
-        "name": name,
+        "name": name_lc,  # canonical lowercase name
         "metadata": meta,
         "files": file_entries,
         "unicodeRanges": ranges,  # inclusive [start,end] codepoint ranges
@@ -271,26 +335,16 @@ def build_manifest(name: str, files: List[FontFileInfo], repo_root: Path) -> Dic
         },
         "hints": {
             "commonBlocks": common_blocks,
+            "preferredLowercaseFilenames": True,
+            "hasCasingMismatches": bool(casing_mismatches),
             "notes": [
                 "unicodeRanges is derived from cmap.getBestCmap() across all parseable font files.",
                 "GSUB/GPOS feature tags are extracted when those tables exist.",
                 "Ligature contents are not enumerated here (by design); use shaping in your sample to demonstrate them.",
+                "If files[].file differs from files[].recommendedFile, consider renaming to the recommended lowercase filenames for portability (CDN/Linux).",
             ],
         },
     }
-
-    return manifest
-
-
-def _range_intersects(ranges: List[List[int]], lo: int, hi: int) -> bool:
-    # ranges are inclusive [a,b]
-    for a, b in ranges:
-        if b < lo:
-            continue
-        if a > hi:
-            return False  # because sorted
-        return True
-    return False
 
 
 def write_json(path: Path, obj: Dict) -> None:
@@ -303,51 +357,62 @@ def write_json(path: Path, obj: Dict) -> None:
 
 
 def main() -> int:
-    ap = argparse.ArgumentParser(description="Generate a JSON manifest for a font family/style name in dist/fonts.")
-    ap.add_argument("--name", required=True, help="Base filename (without extension) in dist/fonts/, e.g. 'mmxx'.")
+    ap = argparse.ArgumentParser(description="Generate data/manifest.json for a font in dist/fonts.")
+    ap.add_argument(
+        "--name",
+        default=DEFAULT_NAME,
+        help=f"Base filename (without extension) in dist/fonts/ (default: {DEFAULT_NAME!r}).",
+    )
     args = ap.parse_args()
 
     repo_root = Path(__file__).resolve().parents[1]  # tools/.. -> repo root
     dist_fonts_dir = repo_root / "dist" / "fonts"
-    data_dir = repo_root / "data"
+    out_path = repo_root / "data" / "manifest.json"
 
-    name = args.name.strip()
-    if not name:
-        raise SystemExit("ERROR: --name cannot be empty")
+    name_in = (args.name or "").strip()
+    if not name_in:
+        raise SystemExit("ERROR: name is empty. Set DEFAULT_NAME or pass --name.")
 
-    files = find_font_files(dist_fonts_dir, name)
+    name_lc = name_in.lower()
+    if name_in != name_lc:
+        print(f"Note: canonicalizing name to lowercase: {name_in!r} -> {name_lc!r}")
+
+    files = find_font_files(dist_fonts_dir, name_lc)
+
     if not files:
-        # Still write a minimal manifest so downstream code can fail gracefully.
         minimal = {
             "manifestVersion": 1,
             "generatedAt": datetime.now(timezone.utc).isoformat(),
-            "name": name,
-            "error": f"No font files found at dist/fonts/{name}.{{{','.join(EXTS)}}}",
+            "name": name_lc,
+            "error": f"No font files found matching dist/fonts/{name_lc}.{{{','.join(EXTS)}}} (case-insensitive lookup attempted).",
             "files": [],
             "unicodeRanges": [],
             "counts": {"codepointsTotal": 0, "codepointsBMP": 0, "codepointsAstral": 0},
             "features": {"GSUB": [], "GPOS": []},
         }
-        write_json(data_dir / "manifest.json", minimal)
-        write_json(dist_fonts_dir / f"{name}.manifest.json", minimal)
+        write_json(out_path, minimal)
         print(minimal["error"])
+        print(f"Wrote: {out_path}")
         return 2
 
-    manifest = build_manifest(name, files, repo_root)
+    manifest = build_manifest(name_lc, files, repo_root)
+    write_json(out_path, manifest)
 
-    out_data = data_dir / "manifest.json"
-    out_cdn = dist_fonts_dir / f"{name}.manifest.json"
+    print(f"Wrote: {out_path}")
+    print("Found files:")
+    for f in sorted(files, key=lambda x: EXTS.index(x.ext)):
+        actual = f.path.name
+        rec = f.recommended_file or actual.lower()
+        if actual != rec:
+            print(f"  - {actual}  (recommended: {rec})")
+        else:
+            print(f"  - {actual}")
 
-    write_json(out_data, manifest)
-    write_json(out_cdn, manifest)
-
-    # Small console summary
-    print(f"Wrote: {out_data}")
-    print(f"Wrote: {out_cdn}")
-    print(f"Files: {', '.join([f'{x.ext}' for x in files])}")
     print(f"Codepoints: {manifest['counts']['codepointsTotal']}")
     if any(f.parse_error for f in files):
         print("Note: Some files could not be parsed; see files[].parseError in the manifest.")
+    if manifest.get("hints", {}).get("hasCasingMismatches"):
+        print("Warning: Some filenames differ from recommended lowercase names (see files[].recommendedFile).")
     return 0
 
 

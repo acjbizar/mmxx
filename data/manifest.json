@@ -1,6 +1,6 @@
 {
   "manifestVersion": 1,
-  "generatedAt": "2026-02-17T19:31:18.009450+00:00",
+  "generatedAt": "2026-02-18T11:29:02.833836+00:00",
   "name": "mmxx",
   "metadata": {
     "family": "mmxx",
@@ -14,18 +14,21 @@
     {
       "ext": "woff2",
       "file": "mmxx.woff2",
+      "recommendedFile": "mmxx.woff2",
       "bytes": 1656,
       "sha256": "16d6b0ebd9ba9a8ef69f91cbe3a65f8ab8d8cff53f1125690c178cae943bcf45"
     },
     {
       "ext": "woff",
       "file": "mmxx.woff",
+      "recommendedFile": "mmxx.woff",
       "bytes": 2548,
       "sha256": "4f3fa92f82d074c933ba1f0be51f073fde52dbd3936ec2c6f24982605bb07641"
     },
     {
       "ext": "ttf",
       "file": "mmxx.ttf",
+      "recommendedFile": "mmxx.ttf",
       "bytes": 6096,
       "sha256": "43d316ede8f7e329646d7b13418f818b67fd7cceef8d113f56ee21b82a721121"
     }
@@ -70,10 +73,13 @@
       "latinExtendedA": false,
       "latinExtendedB": false
     },
+    "preferredLowercaseFilenames": true,
+    "hasCasingMismatches": false,
     "notes": [
       "unicodeRanges is derived from cmap.getBestCmap() across all parseable font files.",
       "GSUB/GPOS feature tags are extracted when those tables exist.",
-      "Ligature contents are not enumerated here (by design); use shaping in your sample to demonstrate them."
+      "Ligature contents are not enumerated here (by design); use shaping in your sample to demonstrate them.",
+      "If files[].file differs from files[].recommendedFile, consider renaming to the recommended lowercase filenames for portability (CDN/Linux)."
     ]
   }
 }
