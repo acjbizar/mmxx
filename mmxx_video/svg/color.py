@@ -56,3 +56,11 @@ def is_whiteish_color_str(s: str) -> bool:
         return (r + g + b) / (3.0 * 255.0) > 0.92
     except Exception:
         return False
+
+def rgb_to_hex(rgb: RGB) -> str:
+    """Convert an (r, g, b) tuple (0..255) to a CSS hex string (#rrggbb)."""
+    r, g, b = rgb
+    r = max(0, min(255, int(r)))
+    g = max(0, min(255, int(g)))
+    b = max(0, min(255, int(b)))
+    return f"#{r:02x}{g:02x}{b:02x}"

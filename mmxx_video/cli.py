@@ -85,6 +85,17 @@ def build_arg_parser() -> argparse.ArgumentParser:
         ),
     )
     ap.add_argument("--bgcolor", type=str, default="", help="Override background color (CSS color).")
+    ap.add_argument(
+        "--bgcolors",
+        nargs="*",
+        default=[],
+        help=(
+            "Per-glyph background colors for --chars mode, in the same order as the characters. "
+            "Provide 1 color to apply to all. Use '-' (or 'none') to skip a glyph. "
+            "Example: --bgcolors black #112233 -"
+        ),
+    )
+
     ap.add_argument("--gif", type=str, default="", help="Use an image from data/ as a theme source (colors + animation).")
     ap.add_argument("--theme", type=str, default="none", choices=THEME_CHOICES, help="Theme (default: none = no animation).")
     ap.add_argument("--to", nargs="?", const="white", default=None, help="Animate polygons toward a target color using the default pulse animation (e.g. --to or --to=yellow).")
@@ -119,6 +130,22 @@ def build_arg_parser() -> argparse.ArgumentParser:
 def main(argv: Optional[List[str]] = None) -> int:
     ap = build_arg_parser()
     args = ap.parse_args(argv)
+    # If --bgcolors is provided in single-glyph mode, treat the first entry as a shorthand for --bgcolor
+    # (unless --bgcolor was explicitly set).
+    if (not args.bgcolor) and getattr(args, 'bgcolors', None):
+        flat: List[str] = []
+        for t in (args.bgcolors or []):
+            if t is None:
+                continue
+            for part in str(t).split(','):
+                part = part.strip()
+                if part:
+                    flat.append(part)
+        if flat:
+            tok = flat[0].strip()
+            if tok.lower() not in {'', '-', 'none', 'null', 'skip', 'transparent'}:
+                args.bgcolor = tok
+
 
     root = Path(__file__).resolve().parent.parent
     src_dir = root / "src"
@@ -153,7 +180,7 @@ def main(argv: Optional[List[str]] = None) -> int:
         for token, _cp, disp in items:
             char_paths.append(resolve_glyph_svg_path(src_dir, prefix, token, disp))
 
-        doc = build_logo_svg_from_chars_grid(char_paths, grid_n=grid_n, gap_flag=args.gap)
+        doc = build_logo_svg_from_chars_grid(char_paths, grid_n=grid_n, gap_flag=args.gap, bgcolors=args.bgcolors)
 
         safe_key = safe_logo_key(items)
         out_stem = f"logo-{'inv-' if args.inverse else ''}{safe_key}"

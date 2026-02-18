@@ -1,15 +1,37 @@
 from __future__ import annotations
 import copy
 from pathlib import Path
-from typing import List, Tuple
+from typing import List, Tuple, Optional
 from lxml import etree
 
 from ..constants import SVG_NS, XLINK_NS
 from .parse import parse_viewbox
 from .style import strip_white_full_canvas_rects
+from .color import parse_css_color_to_rgb, rgb_to_hex
 from .ids import prefix_svg_ids
 
-def build_logo_svg_from_chars_grid(char_svgs: List[Path], grid_n: int, gap_flag: int) -> etree._Element:
+def _flatten_color_tokens(tokens: Optional[List[str]]) -> List[str]:
+    out: List[str] = []
+    for t in (tokens or []):
+        if t is None:
+            continue
+        for part in str(t).split(","):
+            part = part.strip()
+            if part:
+                out.append(part)
+    return out
+
+def _is_skip_bg_token(tok: str) -> bool:
+    t = (tok or "").strip().lower()
+    return t in {"", "-", "none", "null", "skip", "transparent"}
+
+
+def build_logo_svg_from_chars_grid(
+    char_svgs: List[Path],
+    grid_n: int,
+    gap_flag: int,
+    bgcolors: Optional[List[str]] = None,
+) -> etree._Element:
     if grid_n not in (2, 3, 4):
         raise ValueError("grid_n must be 2, 3, or 4.")
     if len(char_svgs) != grid_n * grid_n:
@@ -46,12 +68,42 @@ def build_logo_svg_from_chars_grid(char_svgs: List[Path], grid_n: int, gap_flag:
     svg = etree.Element(f"{{{SVG_NS}}}svg", nsmap={None: SVG_NS, "xlink": XLINK_NS})
     svg.set("viewBox", f"0 0 {total_w} {total_h}")
 
+    # Optional per-glyph background colors (for --chars mode).
+    bg_tokens = _flatten_color_tokens(bgcolors)
+    bg_fills: List[Optional[str]] = [None] * len(char_svgs)
+    if bg_tokens:
+        if len(bg_tokens) == 1:
+            bg_tokens = bg_tokens * len(char_svgs)
+        if len(bg_tokens) != len(char_svgs):
+            raise ValueError(
+                f"--bgcolors expects 1 or {len(char_svgs)} colors for this logo; got {len(bg_tokens)}"
+            )
+        for i, tok in enumerate(bg_tokens):
+            if _is_skip_bg_token(tok):
+                bg_fills[i] = None
+                continue
+            try:
+                bg_fills[i] = rgb_to_hex(parse_css_color_to_rgb(tok))
+            except Exception as e:
+                raise ValueError(f"Invalid --bgcolors color: {tok!r}") from e
+
     for idx, (groot, (minx, miny, vbw, vbh)) in enumerate(zip(glyph_docs, vbs)):
         row = idx // grid_n
         col = idx % grid_n
 
         cell_x0 = pad_x + col * (max_w + gap_x)
         cell_y0 = pad_y + row * (max_h + gap_y)
+
+        # Background rect for this glyph cell (optional)
+        if 0 <= idx < len(bg_fills) and bg_fills[idx] is not None:
+            rect = etree.Element(f"{{{SVG_NS}}}rect")
+            rect.set("x", str(cell_x0))
+            rect.set("y", str(cell_y0))
+            rect.set("width", str(max_w))
+            rect.set("height", str(max_h))
+            rect.set("fill", str(bg_fills[idx]))
+            rect.set("data-bg-glyph-index", str(idx + 1))
+            svg.append(rect)
 
         tx = cell_x0 + (max_w - vbw) * 0.5 - minx
         ty = cell_y0 + (max_h - vbh) * 0.5 - miny
