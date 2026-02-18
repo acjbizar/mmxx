@@ -25,7 +25,7 @@ except Exception:
 # -----------------------------
 # Fixed config
 # -----------------------------
-FONT_FAMILY = "mmxx"
+FONT_FAMILY = "MMXX"
 FONT_STYLE  = "Regular"
 
 DEFAULT_SRC_DIR  = Path("src")
