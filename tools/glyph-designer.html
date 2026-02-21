@@ -42,13 +42,13 @@
 
         .app {
             display: grid;
-            grid-template-columns: minmax(320px, 520px) 1fr;
+            grid-template-columns: minmax(320px, 560px) 1fr;
             gap: 16px;
             padding: 16px;
             min-height: 100vh;
         }
 
-        @media (max-width: 1100px){
+        @media (max-width: 1200px){
             .app { grid-template-columns: 1fr; }
         }
 
@@ -165,7 +165,7 @@
             height: auto;
             display: block;
             touch-action: none;
-            background: #fff; /* editor canvas should always be white for clarity */
+            background: #fff;
             border-radius: 8px;
             border: 1px solid var(--border);
         }
@@ -212,7 +212,7 @@
 
         textarea {
             width: 100%;
-            min-height: 240px;
+            min-height: 220px;
             resize: vertical;
             border: 1px solid var(--border);
             border-radius: 10px;
@@ -243,6 +243,12 @@
             padding: 3px 8px;
             background: color-mix(in srgb, var(--panel) 85%, var(--bg) 15%);
         }
+
+        .panel-actions {
+            display: flex;
+            gap: 8px;
+            flex-wrap: wrap;
+        }
     </style>
 </head>
 <body>
@@ -271,7 +277,6 @@
                     <button id="fillBtn" type="button">Fill all</button>
                     <button id="invertBtn" type="button">Invert</button>
                     <button id="copyJsonBtn" class="primary" type="button">Copy JSON</button>
-                    <button id="copySvgBtn" class="primary" type="button">Copy SVG</button>
                 </div>
             </div>
 
@@ -295,7 +300,7 @@
                 <div class="textarea-wrap">
                     <textarea id="jsonOutput" spellcheck="false"></textarea>
                     <div class="small">
-                        Includes <span class="mono">bitstring</span>, flat <span class="mono">bits</span>, and nested <span class="mono">grid</span> in the same row/cell/triangle order as your scripts.
+                        Includes <span class="mono">bitstring</span>, flat <span class="mono">bits</span>, and nested <span class="mono">grid</span>.
                     </div>
                 </div>
             </div>
@@ -304,12 +309,36 @@
         <div class="panel">
             <div class="panel-header">
                 <h2>SVG markup</h2>
+                <div class="small">normal (1 = active)</div>
             </div>
             <div class="panel-body">
                 <div class="textarea-wrap">
                     <textarea id="svgOutput" spellcheck="false"></textarea>
+                    <div class="panel-actions">
+                        <button id="copySvgBtn" class="primary" type="button">Copy SVG</button>
+                        <button id="saveSvgBtn" class="primary" type="button">Save SVG</button>
+                    </div>
                     <div class="small">
-                        Output uses polygon <span class="mono">class="r{row}c{col}-{side}"</span> selectors, plus <span class="mono">&lt;title&gt;</span>, <span class="mono">&lt;desc&gt;</span>, and root metadata.
+                        Uses polygon <span class="mono">class="r{row}c{col}-{side}"</span> selectors.
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <div class="panel">
+            <div class="panel-header">
+                <h2>SVG markup alt</h2>
+                <div class="small">inverse (0 = active)</div>
+            </div>
+            <div class="panel-body">
+                <div class="textarea-wrap">
+                    <textarea id="svgAltOutput" spellcheck="false"></textarea>
+                    <div class="panel-actions">
+                        <button id="copySvgAltBtn" class="primary" type="button">Copy alt SVG</button>
+                        <button id="saveSvgAltBtn" class="primary" type="button">Save alt SVG</button>
+                    </div>
+                    <div class="small">
+                        Inverse occupancy preview for <span class="mono">character-u{codepoint}-alt.svg</span>.
                     </div>
                 </div>
             </div>
@@ -336,6 +365,7 @@
         const metaInfo = document.getElementById("metaInfo");
         const jsonOutput = document.getElementById("jsonOutput");
         const svgOutput = document.getElementById("svgOutput");
+        const svgAltOutput = document.getElementById("svgAltOutput");
         const enabledCountPill = document.getElementById("enabledCountPill");
         const bitPreviewPill = document.getElementById("bitPreviewPill");
 
@@ -343,7 +373,11 @@
         const fillBtn = document.getElementById("fillBtn");
         const invertBtn = document.getElementById("invertBtn");
         const copyJsonBtn = document.getElementById("copyJsonBtn");
+
         const copySvgBtn = document.getElementById("copySvgBtn");
+        const saveSvgBtn = document.getElementById("saveSvgBtn");
+        const copySvgAltBtn = document.getElementById("copySvgAltBtn");
+        const saveSvgAltBtn = document.getElementById("saveSvgAltBtn");
 
         const polygonIndex = new Map(); // key "r,c,t" -> <polygon>
 
@@ -361,15 +395,18 @@
             const cps = Array.from(raw);
             const ch = cps.length ? cps[0] : "";
             const hasExtra = cps.length > 1;
+
             if (!ch) {
                 return {
                     ch: "",
-                    codepoint: null,
-                    hex: "",
+                    codepoint: 0,
+                    hex: "0000",
                     filename: "character-u0000.svg",
+                    altFilename: "character-u0000-alt.svg",
                     warning: hasExtra ? "Using first code point only" : ""
                 };
             }
+
             const cp = ch.codePointAt(0);
             const hex = cp.toString(16).padStart(4, "0");
             return {
@@ -377,13 +414,9 @@
                 codepoint: cp,
                 hex,
                 filename: `character-u${hex}.svg`,
+                altFilename: `character-u${hex}-alt.svg`,
                 warning: hasExtra ? "Using first code point only" : ""
             };
-        }
-
-        function unicodeNameFallback(cp) {
-            // Browser JS doesn't expose Unicode names reliably; keep simple.
-            return cp == null ? "" : `U+${cp.toString(16).toUpperCase().padStart(4, "0")}`;
         }
 
         function trianglePoints(r, c, side) {
@@ -423,7 +456,6 @@
             editorSvg.innerHTML = "";
             polygonIndex.clear();
 
-            // Background
             const bg = document.createElementNS(NS, "rect");
             bg.setAttribute("x", "0");
             bg.setAttribute("y", "0");
@@ -432,7 +464,6 @@
             bg.setAttribute("fill", "#fff");
             editorSvg.appendChild(bg);
 
-            // Triangle polygons
             const trisGroup = document.createElementNS(NS, "g");
             trisGroup.setAttribute("id", "triangles");
             editorSvg.appendChild(trisGroup);
@@ -455,7 +486,6 @@
                 }
             }
 
-            // Grid lines (cell boundaries)
             const gridLines = document.createElementNS(NS, "g");
             gridLines.setAttribute("class", "grid-lines");
             editorSvg.appendChild(gridLines);
@@ -480,7 +510,6 @@
                 gridLines.appendChild(line);
             }
 
-            // Optional center dots (helps visually align triangle centers)
             const centers = document.createElementNS(NS, "g");
             centers.setAttribute("class", "cell-centers");
             editorSvg.appendChild(centers);
@@ -534,11 +563,14 @@
             return n;
         }
 
+        function cloneGrid() {
+            return grid.map(row => row.map(cell => cell.slice()));
+        }
+
         function buildJsonObject() {
             const info = getCurrentCharInfo();
             const bits = flattenedBits();
             const bs = bits.join("");
-            const cp = info.codepoint;
 
             return {
                 meta: {
@@ -550,29 +582,35 @@
                     bit_count: ROWS * COLS * TRI_ORDER.length
                 },
                 glyph: {
-                    codepoint: cp,
+                    codepoint: info.codepoint,
                     char: info.ch || "",
-                    source_hex: info.hex || "",
+                    source_hex: info.hex,
                     source_file: info.filename,
                     enabled_count: enabledCount(),
                     bitstring: bs,
                     bits,
-                    grid: structuredClone(grid)
+                    grid: cloneGrid()
                 }
             };
         }
 
-        function buildSvgMarkup() {
+        function buildSvgMarkup({ alt = false } = {}) {
             const info = getCurrentCharInfo();
-            const cp = info.codepoint;
-            const cpHex = cp == null ? "U+0000" : `U+${cp.toString(16).toUpperCase().padStart(4, "0")}`;
+            const cpHex = `U+${info.hex.toUpperCase()}`;
             const ch = info.ch || "";
-            const title = ch ? `Glyph ${cpHex} (${ch})` : `Glyph ${cpHex}`;
-            const desc = `Generated glyph for ${cpHex} | grid ${ROWS}x${COLS} | 256 bits`;
+            const title = ch
+                ? `Glyph ${cpHex} (${ch})${alt ? " alt" : ""}`
+                : `Glyph ${cpHex}${alt ? " alt" : ""}`;
+            const desc = [
+                `Generated glyph for ${cpHex}`,
+                `grid ${ROWS}x${COLS}`,
+                `256 bits`,
+                alt ? `inverse occupancy (0=active,1=inactive)` : `normal occupancy (1=active,0=inactive)`
+            ].join(" | ");
 
             const lines = [];
             lines.push(
-                `<svg xmlns="http://www.w3.org/2000/svg" width="${COLS*CELL}" height="${ROWS*CELL}" viewBox="0 0 ${COLS*CELL} ${ROWS*CELL}" data-codepoint="${escapeXml(cpHex)}" data-char="${escapeXml(ch)}">`
+                `<svg xmlns="http://www.w3.org/2000/svg" width="${COLS*CELL}" height="${ROWS*CELL}" viewBox="0 0 ${COLS*CELL} ${ROWS*CELL}" data-codepoint="${escapeXml(cpHex)}" data-char="${escapeXml(ch)}" data-variant="${alt ? "alt" : "normal"}">`
             );
             lines.push(`    <title>${escapeXml(title)}</title>`);
             lines.push(`    <desc>${escapeXml(desc)}</desc>`);
@@ -583,10 +621,14 @@
             lines.push("    <!-- Grid cells, each cell has 4 editable triangles (class-based selectors) -->");
             lines.push(`    <g fill="#000" shape-rendering="crispEdges">`);
 
+            let idx = 0;
             for (let r = 0; r < ROWS; r++) {
                 for (let c = 0; c < COLS; c++) {
                     for (let t = 0; t < TRI_ORDER.length; t++) {
-                        if (!grid[r][c][t]) continue;
+                        const bit = grid[r][c][t] ? "1" : "0";
+                        idx++;
+                        const isActive = alt ? (bit === "0") : (bit === "1");
+                        if (!isActive) continue;
                         const side = TRI_ORDER[t];
                         const pts = pointsAttr(trianglePoints(r, c, side));
                         lines.push(`        <polygon class="r${r}c${c}-${side}" points="${pts}"/>`);
@@ -602,30 +644,35 @@
 
         function updateMeta() {
             const info = getCurrentCharInfo();
-            const cpLine = info.codepoint == null
-                ? "Codepoint: —"
-                : `Codepoint: U+${info.hex.toUpperCase()} (${info.codepoint})`;
-            const fnLine = `Filename: ${info.filename}`;
-            const warnLine = info.warning ? `Note: ${info.warning}` : "";
-            metaInfo.innerHTML = [
+            const cpLine = `Codepoint: U+${info.hex.toUpperCase()} (${info.codepoint})`;
+
+            const parts = [
                 `<div>Character: ${escapeXml(info.ch || "—")}</div>`,
                 `<div>${escapeXml(cpLine)}</div>`,
-                `<div>${escapeXml(fnLine)}</div>`,
-                `<div>Bitstring length: 256</div>`,
-                warnLine ? `<div style="color:var(--danger)">${escapeXml(warnLine)}</div>` : ""
-            ].join("");
+                `<div>${escapeXml("Filename: " + info.filename)}</div>`,
+                `<div>${escapeXml("Alt filename: " + info.altFilename)}</div>`,
+                `<div>Bitstring length: 256</div>`
+            ];
+
+            if (info.warning) {
+                parts.push(`<div style="color:var(--danger)">${escapeXml("Note: " + info.warning)}</div>`);
+            }
+
+            metaInfo.innerHTML = parts.join("");
         }
 
         function updateOutputs() {
             updateMeta();
 
             const jsonObj = buildJsonObject();
-            const svg = buildSvgMarkup();
+            const svgNormal = buildSvgMarkup({ alt: false });
+            const svgAlt = buildSvgMarkup({ alt: true });
             const bs = jsonObj.glyph.bitstring;
             const count = jsonObj.glyph.enabled_count;
 
             jsonOutput.value = JSON.stringify(jsonObj, null, 2);
-            svgOutput.value = svg;
+            svgOutput.value = svgNormal;
+            svgAltOutput.value = svgAlt;
 
             enabledCountPill.textContent = `Enabled: ${count}`;
             bitPreviewPill.textContent = `Bits: ${bs.slice(0, 16)}…`;
@@ -659,7 +706,6 @@
             try {
                 await navigator.clipboard.writeText(text);
             } catch {
-                // Fallback
                 const ta = document.createElement("textarea");
                 ta.value = text;
                 document.body.appendChild(ta);
@@ -667,6 +713,24 @@
                 document.execCommand("copy");
                 ta.remove();
             }
+        }
+
+        function saveTextFile(filename, text, mime = "image/svg+xml;charset=utf-8") {
+            const blob = new Blob([text], { type: mime });
+            const url = URL.createObjectURL(blob);
+            const a = document.createElement("a");
+            a.href = url;
+            a.download = filename;
+            document.body.appendChild(a);
+            a.click();
+            a.remove();
+            URL.revokeObjectURL(url);
+        }
+
+        function flashButton(btn, label, ms = 900) {
+            const original = btn.textContent;
+            btn.textContent = label;
+            setTimeout(() => (btn.textContent = original), ms);
         }
 
         // Wire up controls
@@ -677,14 +741,29 @@
 
         copyJsonBtn.addEventListener("click", async () => {
             await copyText(jsonOutput.value);
-            copyJsonBtn.textContent = "Copied JSON";
-            setTimeout(() => (copyJsonBtn.textContent = "Copy JSON"), 900);
+            flashButton(copyJsonBtn, "Copied JSON");
         });
 
         copySvgBtn.addEventListener("click", async () => {
             await copyText(svgOutput.value);
-            copySvgBtn.textContent = "Copied SVG";
-            setTimeout(() => (copySvgBtn.textContent = "Copy SVG"), 900);
+            flashButton(copySvgBtn, "Copied SVG");
+        });
+
+        copySvgAltBtn.addEventListener("click", async () => {
+            await copyText(svgAltOutput.value);
+            flashButton(copySvgAltBtn, "Copied alt SVG");
+        });
+
+        saveSvgBtn.addEventListener("click", () => {
+            const info = getCurrentCharInfo();
+            saveTextFile(info.filename, svgOutput.value);
+            flashButton(saveSvgBtn, "Saved SVG");
+        });
+
+        saveSvgAltBtn.addEventListener("click", () => {
+            const info = getCurrentCharInfo();
+            saveTextFile(info.altFilename, svgAltOutput.value);
+            flashButton(saveSvgAltBtn, "Saved alt SVG");
         });
 
         // Init

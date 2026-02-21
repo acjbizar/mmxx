@@ -1,6 +1,6 @@
 {
   "manifestVersion": 1,
-  "generatedAt": "2026-02-18T11:31:59.459139+00:00",
+  "generatedAt": "2026-02-21T12:48:17.575859+00:00",
   "name": "mmxx",
   "metadata": {
     "family": "MMXX",
@@ -8,35 +8,39 @@
     "fullName": "MMXX Regular",
     "postScriptName": "MMXX-Regular",
     "unitsPerEm": 1000,
-    "glyphCount": 84
+    "glyphCount": 86
   },
   "files": [
     {
       "ext": "woff2",
       "file": "mmxx.woff2",
       "recommendedFile": "mmxx.woff2",
-      "bytes": 1768,
-      "sha256": "e84a8959029f710e66629683733346c544ca2e3bbcfc60d0c899b9dce8cb8f05"
+      "bytes": 1840,
+      "sha256": "f2bf18f678ab2d4c4306798f6d15605a2fa0bf26d3e6a02d84d5c4f035033038"
     },
     {
       "ext": "woff",
       "file": "mmxx.woff",
       "recommendedFile": "mmxx.woff",
-      "bytes": 2704,
-      "sha256": "e16068b0e35c1023a5c307e1079d57451fb970c15bfca0dee24e6c8acf942b30"
+      "bytes": 2804,
+      "sha256": "198b6a36092ec89fbf1874c6d969bbbf76c7eedf7d97ce9508cf31a3eba18f16"
     },
     {
       "ext": "ttf",
       "file": "mmxx.ttf",
       "recommendedFile": "mmxx.ttf",
-      "bytes": 6460,
-      "sha256": "ec898274ed214d14fd001a12749de2c1316d082337c4619c8a4801fd11f9cfc2"
+      "bytes": 6740,
+      "sha256": "61c66a6e75336f1d478705fa023180c2b0e1d447d9123f6aff727617aae26f30"
     }
   ],
   "unicodeRanges": [
     [
       32,
       32
+    ],
+    [
+      35,
+      35
     ],
     [
       46,
@@ -64,8 +68,8 @@
     ]
   ],
   "counts": {
-    "codepointsTotal": 41,
-    "codepointsBMP": 40,
+    "codepointsTotal": 42,
+    "codepointsBMP": 41,
     "codepointsAstral": 1
   },
   "features": {

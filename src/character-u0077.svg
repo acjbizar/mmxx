@@ -1,6 +1,6 @@
-<svg xmlns="http://www.w3.org/2000/svg" width="240" height="240" viewBox="0 0 240 240" data-codepoint="U+0077" data-char="w">
+<svg xmlns="http://www.w3.org/2000/svg" width="240" height="240" viewBox="0 0 240 240" data-codepoint="U+0077" data-char="w" data-variant="normal">
     <title>Glyph U+0077 (w)</title>
-    <desc>Generated glyph for U+0077 | LATIN SMALL LETTER W | grid 8x8 | 256 bits</desc>
+    <desc>Generated glyph for U+0077 | LATIN SMALL LETTER W | grid 8x8 | 256 bits | normal occupancy (1=active,0=inactive)</desc>
 
     <!-- Background -->
     <rect x="0" y="0" width="240" height="240" fill="#fff"/>

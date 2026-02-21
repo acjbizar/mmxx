@@ -138,7 +138,7 @@ def resolve_inverse_svg(src_dir: Path, ch: str) -> Optional[Path]:
     slug = _cp_slug_for_char(ch)
     candidates = [
         src_dir / f"inverse-{slug}.svg",
-        src_dir / f"inverse-{slug.upper()}.svg",
+        src_dir / f"character-{slug}-alt.svg",
     ]
 
     lo = ch.lower()

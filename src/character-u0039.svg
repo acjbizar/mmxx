@@ -1,6 +1,6 @@
-<svg xmlns="http://www.w3.org/2000/svg" width="240" height="240" viewBox="0 0 240 240" data-codepoint="U+0039" data-char="9">
+<svg xmlns="http://www.w3.org/2000/svg" width="240" height="240" viewBox="0 0 240 240" data-codepoint="U+0039" data-char="9" data-variant="normal">
     <title>Glyph U+0039 (9)</title>
-    <desc>Generated glyph for U+0039 | DIGIT NINE | grid 8x8 | 256 bits</desc>
+    <desc>Generated glyph for U+0039 | DIGIT NINE | grid 8x8 | 256 bits | normal occupancy (1=active,0=inactive)</desc>
 
     <!-- Background -->
     <rect x="0" y="0" width="240" height="240" fill="#fff"/>
