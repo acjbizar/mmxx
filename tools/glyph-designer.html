@@ -15,10 +15,26 @@
             --border: #d8dce3;
             --accent: #2f6fed;
             --danger: #d64545;
+            --ok: #2c9a4b;
             --shadow: 0 8px 30px rgba(0,0,0,.08);
         }
+
+        html[data-theme="dark"]{
+            --bg: #0f1217;
+            --panel: #171b22;
+            --text: #eceff4;
+            --muted: #aab3c2;
+            --line: #4f5868;
+            --line-strong: #6b7689;
+            --border: #2b3340;
+            --accent: #75a7ff;
+            --danger: #ff7676;
+            --ok: #62d98a;
+            --shadow: 0 10px 32px rgba(0,0,0,.35);
+        }
+
         @media (prefers-color-scheme: dark) {
-            :root{
+            html:not([data-theme="light"]):not([data-theme="dark"]){
                 --bg: #0f1217;
                 --panel: #171b22;
                 --text: #eceff4;
@@ -28,11 +44,13 @@
                 --border: #2b3340;
                 --accent: #75a7ff;
                 --danger: #ff7676;
+                --ok: #62d98a;
                 --shadow: 0 10px 32px rgba(0,0,0,.35);
             }
         }
 
         * { box-sizing: border-box; }
+
         body {
             margin: 0;
             font: 14px/1.4 system-ui, -apple-system, Segoe UI, Roboto, Inter, sans-serif;
@@ -48,7 +66,7 @@
             min-height: 100vh;
         }
 
-        @media (max-width: 1200px){
+        @media (max-width: 1180px){
             .app { grid-template-columns: 1fr; }
         }
 
@@ -101,15 +119,19 @@
             min-width: 88px;
         }
 
-        input[type="text"] {
+        input[type="text"],
+        select {
             min-width: 90px;
-            max-width: 180px;
             padding: 8px 10px;
             border: 1px solid var(--border);
             border-radius: 8px;
             background: var(--panel);
             color: var(--text);
             font: inherit;
+        }
+
+        #charInput {
+            max-width: 180px;
         }
 
         .mono {
@@ -158,6 +180,7 @@
             background: color-mix(in srgb, var(--panel) 85%, var(--bg) 15%);
             display: grid;
             place-items: center;
+            user-select: none;
         }
 
         svg#editorSvg {
@@ -165,7 +188,8 @@
             height: auto;
             display: block;
             touch-action: none;
-            background: #fff;
+            user-select: none;
+            background: #fff; /* keep editor canvas white for clarity */
             border-radius: 8px;
             border: 1px solid var(--border);
         }
@@ -212,7 +236,7 @@
 
         textarea {
             width: 100%;
-            min-height: 220px;
+            min-height: 240px;
             resize: vertical;
             border: 1px solid var(--border);
             border-radius: 10px;
@@ -244,6 +268,9 @@
             background: color-mix(in srgb, var(--panel) 85%, var(--bg) 15%);
         }
 
+        .pill.ok { color: var(--ok); border-color: color-mix(in srgb, var(--ok) 50%, var(--border) 50%); }
+        .pill.warn { color: var(--danger); border-color: color-mix(in srgb, var(--danger) 50%, var(--border) 50%); }
+
         .panel-actions {
             display: flex;
             gap: 8px;
@@ -266,6 +293,15 @@
                     <span class="small">Use one character (first code point is used)</span>
                 </div>
 
+                <div class="row">
+                    <label for="themeSelect">Theme</label>
+                    <select id="themeSelect" aria-label="Theme mode">
+                        <option value="auto">Auto</option>
+                        <option value="light">Light</option>
+                        <option value="dark">Dark</option>
+                    </select>
+                </div>
+
                 <div class="meta mono" id="metaInfo">
                     <div>Codepoint: —</div>
                     <div>Filename: —</div>
@@ -277,6 +313,8 @@
                     <button id="fillBtn" type="button">Fill all</button>
                     <button id="invertBtn" type="button">Invert</button>
                     <button id="copyJsonBtn" class="primary" type="button">Copy JSON</button>
+                    <button id="loadSvgBtn" type="button">Load SVG file</button>
+                    <input id="loadSvgInput" type="file" accept=".svg,image/svg+xml" hidden />
                 </div>
             </div>
 
@@ -287,6 +325,7 @@
             <div class="status mono">
                 <span class="pill" id="enabledCountPill">Enabled: 0</span>
                 <span class="pill" id="bitPreviewPill">Bits: 0000000000000000…</span>
+                <span class="pill" id="statusPill">Ready</span>
             </div>
         </div>
     </section>
@@ -317,28 +356,10 @@
                     <div class="panel-actions">
                         <button id="copySvgBtn" class="primary" type="button">Copy SVG</button>
                         <button id="saveSvgBtn" class="primary" type="button">Save SVG</button>
+                        <button id="loadSvgTextBtn" type="button">Load from SVG text</button>
                     </div>
                     <div class="small">
-                        Uses polygon <span class="mono">class="r{row}c{col}-{side}"</span> selectors.
-                    </div>
-                </div>
-            </div>
-        </div>
-
-        <div class="panel">
-            <div class="panel-header">
-                <h2>SVG markup alt</h2>
-                <div class="small">inverse (0 = active)</div>
-            </div>
-            <div class="panel-body">
-                <div class="textarea-wrap">
-                    <textarea id="svgAltOutput" spellcheck="false"></textarea>
-                    <div class="panel-actions">
-                        <button id="copySvgAltBtn" class="primary" type="button">Copy alt SVG</button>
-                        <button id="saveSvgAltBtn" class="primary" type="button">Save alt SVG</button>
-                    </div>
-                    <div class="small">
-                        Inverse occupancy preview for <span class="mono">character-u{codepoint}-alt.svg</span>.
+                        Supports loading both legacy <span class="mono">id="r0c0-top"</span> and new <span class="mono">class="r0c0-top"</span> selectors.
                     </div>
                 </div>
             </div>
@@ -349,11 +370,11 @@
 <script>
     (() => {
         const NS = "http://www.w3.org/2000/svg";
-
         const ROWS = 8;
         const COLS = 8;
         const CELL = 30;
         const TRI_ORDER = ["top", "right", "bottom", "left"];
+        const TRI_RE = /^r(\d+)c(\d+)-(top|right|bottom|left)$/;
 
         /** grid[row][col][triIndex] -> 0/1 */
         const grid = Array.from({ length: ROWS }, () =>
@@ -362,24 +383,62 @@
 
         const editorSvg = document.getElementById("editorSvg");
         const charInput = document.getElementById("charInput");
+        const themeSelect = document.getElementById("themeSelect");
+
         const metaInfo = document.getElementById("metaInfo");
         const jsonOutput = document.getElementById("jsonOutput");
         const svgOutput = document.getElementById("svgOutput");
-        const svgAltOutput = document.getElementById("svgAltOutput");
+
         const enabledCountPill = document.getElementById("enabledCountPill");
         const bitPreviewPill = document.getElementById("bitPreviewPill");
+        const statusPill = document.getElementById("statusPill");
 
         const clearBtn = document.getElementById("clearBtn");
         const fillBtn = document.getElementById("fillBtn");
         const invertBtn = document.getElementById("invertBtn");
         const copyJsonBtn = document.getElementById("copyJsonBtn");
 
+        const loadSvgBtn = document.getElementById("loadSvgBtn");
+        const loadSvgInput = document.getElementById("loadSvgInput");
+
         const copySvgBtn = document.getElementById("copySvgBtn");
         const saveSvgBtn = document.getElementById("saveSvgBtn");
-        const copySvgAltBtn = document.getElementById("copySvgAltBtn");
-        const saveSvgAltBtn = document.getElementById("saveSvgAltBtn");
+        const loadSvgTextBtn = document.getElementById("loadSvgTextBtn");
 
         const polygonIndex = new Map(); // key "r,c,t" -> <polygon>
+
+        let dragActive = false;
+        let dragValue = null; // 0 or 1
+
+        // ---------------------------
+        // Theme mode (auto/light/dark)
+        // ---------------------------
+
+        function applyThemeMode(mode) {
+            if (mode === "light") {
+                document.documentElement.setAttribute("data-theme", "light");
+            } else if (mode === "dark") {
+                document.documentElement.setAttribute("data-theme", "dark");
+            } else {
+                document.documentElement.removeAttribute("data-theme"); // auto
+            }
+            localStorage.setItem("glyphDesignerThemeMode", mode);
+        }
+
+        function initThemeMode() {
+            const saved = localStorage.getItem("glyphDesignerThemeMode") || "auto";
+            themeSelect.value = ["auto","light","dark"].includes(saved) ? saved : "auto";
+            applyThemeMode(themeSelect.value);
+        }
+
+        themeSelect.addEventListener("change", () => {
+            applyThemeMode(themeSelect.value);
+            setStatus(`Theme: ${themeSelect.value}`, "ok");
+        });
+
+        // ---------------------------
+        // General helpers
+        // ---------------------------
 
         function escapeXml(s) {
             return String(s)
@@ -388,6 +447,12 @@
                 .replaceAll(">", "&gt;")
                 .replaceAll('"', "&quot;")
                 .replaceAll("'", "&apos;");
+        }
+
+        function setStatus(text, kind = "") {
+            statusPill.textContent = text;
+            statusPill.classList.remove("ok", "warn");
+            if (kind) statusPill.classList.add(kind);
         }
 
         function getCurrentCharInfo() {
@@ -402,7 +467,6 @@
                     codepoint: 0,
                     hex: "0000",
                     filename: "character-u0000.svg",
-                    altFilename: "character-u0000-alt.svg",
                     warning: hasExtra ? "Using first code point only" : ""
                 };
             }
@@ -414,7 +478,6 @@
                 codepoint: cp,
                 hex,
                 filename: `character-u${hex}.svg`,
-                altFilename: `character-u${hex}-alt.svg`,
                 warning: hasExtra ? "Using first code point only" : ""
             };
         }
@@ -444,6 +507,24 @@
             return `${r},${c},${t}`;
         }
 
+        function triIndexFromName(name) {
+            return TRI_ORDER.indexOf(name);
+        }
+
+        function clearGrid(value = 0) {
+            for (let r = 0; r < ROWS; r++) {
+                for (let c = 0; c < COLS; c++) {
+                    for (let t = 0; t < TRI_ORDER.length; t++) {
+                        grid[r][c][t] = value ? 1 : 0;
+                    }
+                }
+            }
+        }
+
+        function cloneGrid() {
+            return grid.map(row => row.map(cell => cell.slice()));
+        }
+
         function setTriVisual(r, c, t) {
             const el = polygonIndex.get(triKey(r,c,t));
             if (!el) return;
@@ -451,6 +532,28 @@
             el.classList.toggle("active", active);
             el.setAttribute("fill", active ? "#000" : "#fff");
         }
+
+        function refreshEditorVisuals() {
+            for (let r = 0; r < ROWS; r++) {
+                for (let c = 0; c < COLS; c++) {
+                    for (let t = 0; t < TRI_ORDER.length; t++) {
+                        setTriVisual(r,c,t);
+                    }
+                }
+            }
+        }
+
+        function applyTri(r, c, t, value) {
+            const next = value ? 1 : 0;
+            if (grid[r][c][t] === next) return false;
+            grid[r][c][t] = next;
+            setTriVisual(r,c,t);
+            return true;
+        }
+
+        // ---------------------------
+        // Editor SVG construction
+        // ---------------------------
 
         function buildEditorSvg() {
             editorSvg.innerHTML = "";
@@ -478,10 +581,12 @@
                         poly.setAttribute("data-c", String(c));
                         poly.setAttribute("data-t", String(t));
                         poly.setAttribute("points", pointsAttr(trianglePoints(r, c, side)));
-                        poly.addEventListener("click", onTriangleClick);
+
+                        poly.addEventListener("mousedown", onTriangleMouseDown);
+                        poly.addEventListener("mouseenter", onTriangleMouseEnter);
+
                         trisGroup.appendChild(poly);
                         polygonIndex.set(triKey(r,c,t), poly);
-                        setTriVisual(r,c,t);
                     }
                 }
             }
@@ -523,17 +628,63 @@
                     centers.appendChild(circle);
                 }
             }
+
+            refreshEditorVisuals();
         }
 
-        function onTriangleClick(e) {
+        // ---------------------------
+        // Mouse drag painting
+        // ---------------------------
+
+        function onTriangleMouseDown(e) {
+            if (e.button !== 0) return; // left mouse only
+            e.preventDefault();
+
             const el = e.currentTarget;
             const r = Number(el.getAttribute("data-r"));
             const c = Number(el.getAttribute("data-c"));
             const t = Number(el.getAttribute("data-t"));
-            grid[r][c][t] = grid[r][c][t] ? 0 : 1;
-            setTriVisual(r,c,t);
+
+            dragActive = true;
+            dragValue = grid[r][c][t] ? 0 : 1; // first hit determines paint mode
+            applyTri(r, c, t, dragValue);
             updateOutputs();
+
+            setStatus(dragValue ? "Drag mode: enable" : "Drag mode: disable");
         }
+
+        function onTriangleMouseEnter(e) {
+            if (!dragActive) return;
+            // extra guard for cases where mouseup happened outside and state lagged
+            if (!(e.buttons & 1)) {
+                stopDrag();
+                return;
+            }
+
+            const el = e.currentTarget;
+            const r = Number(el.getAttribute("data-r"));
+            const c = Number(el.getAttribute("data-c"));
+            const t = Number(el.getAttribute("data-t"));
+
+            const changed = applyTri(r, c, t, dragValue);
+            if (changed) updateOutputs();
+        }
+
+        function stopDrag() {
+            if (dragActive) {
+                dragActive = false;
+                dragValue = null;
+                setStatus("Ready");
+            }
+        }
+
+        window.addEventListener("mouseup", stopDrag);
+        window.addEventListener("blur", stopDrag);
+        document.addEventListener("dragstart", (e) => e.preventDefault());
+
+        // ---------------------------
+        // Data builders
+        // ---------------------------
 
         function flattenedBits() {
             const out = [];
@@ -563,14 +714,9 @@
             return n;
         }
 
-        function cloneGrid() {
-            return grid.map(row => row.map(cell => cell.slice()));
-        }
-
         function buildJsonObject() {
             const info = getCurrentCharInfo();
             const bits = flattenedBits();
-            const bs = bits.join("");
 
             return {
                 meta: {
@@ -587,30 +733,28 @@
                     source_hex: info.hex,
                     source_file: info.filename,
                     enabled_count: enabledCount(),
-                    bitstring: bs,
+                    bitstring: bits.join(""),
                     bits,
                     grid: cloneGrid()
                 }
             };
         }
 
-        function buildSvgMarkup({ alt = false } = {}) {
+        function buildSvgMarkup() {
             const info = getCurrentCharInfo();
             const cpHex = `U+${info.hex.toUpperCase()}`;
             const ch = info.ch || "";
-            const title = ch
-                ? `Glyph ${cpHex} (${ch})${alt ? " alt" : ""}`
-                : `Glyph ${cpHex}${alt ? " alt" : ""}`;
+            const title = ch ? `Glyph ${cpHex} (${ch})` : `Glyph ${cpHex}`;
             const desc = [
                 `Generated glyph for ${cpHex}`,
                 `grid ${ROWS}x${COLS}`,
                 `256 bits`,
-                alt ? `inverse occupancy (0=active,1=inactive)` : `normal occupancy (1=active,0=inactive)`
+                `normal occupancy (1=active,0=inactive)`
             ].join(" | ");
 
             const lines = [];
             lines.push(
-                `<svg xmlns="http://www.w3.org/2000/svg" width="${COLS*CELL}" height="${ROWS*CELL}" viewBox="0 0 ${COLS*CELL} ${ROWS*CELL}" data-codepoint="${escapeXml(cpHex)}" data-char="${escapeXml(ch)}" data-variant="${alt ? "alt" : "normal"}">`
+                `<svg xmlns="http://www.w3.org/2000/svg" width="${COLS*CELL}" height="${ROWS*CELL}" viewBox="0 0 ${COLS*CELL} ${ROWS*CELL}" data-codepoint="${escapeXml(cpHex)}" data-char="${escapeXml(ch)}" data-variant="normal">`
             );
             lines.push(`    <title>${escapeXml(title)}</title>`);
             lines.push(`    <desc>${escapeXml(desc)}</desc>`);
@@ -621,14 +765,10 @@
             lines.push("    <!-- Grid cells, each cell has 4 editable triangles (class-based selectors) -->");
             lines.push(`    <g fill="#000" shape-rendering="crispEdges">`);
 
-            let idx = 0;
             for (let r = 0; r < ROWS; r++) {
                 for (let c = 0; c < COLS; c++) {
                     for (let t = 0; t < TRI_ORDER.length; t++) {
-                        const bit = grid[r][c][t] ? "1" : "0";
-                        idx++;
-                        const isActive = alt ? (bit === "0") : (bit === "1");
-                        if (!isActive) continue;
+                        if (!grid[r][c][t]) continue;
                         const side = TRI_ORDER[t];
                         const pts = pointsAttr(trianglePoints(r, c, side));
                         lines.push(`        <polygon class="r${r}c${c}-${side}" points="${pts}"/>`);
@@ -642,6 +782,10 @@
             return lines.join("\n");
         }
 
+        // ---------------------------
+        // Output + UI sync
+        // ---------------------------
+
         function updateMeta() {
             const info = getCurrentCharInfo();
             const cpLine = `Codepoint: U+${info.hex.toUpperCase()} (${info.codepoint})`;
@@ -650,7 +794,6 @@
                 `<div>Character: ${escapeXml(info.ch || "—")}</div>`,
                 `<div>${escapeXml(cpLine)}</div>`,
                 `<div>${escapeXml("Filename: " + info.filename)}</div>`,
-                `<div>${escapeXml("Alt filename: " + info.altFilename)}</div>`,
                 `<div>Bitstring length: 256</div>`
             ];
 
@@ -665,28 +808,20 @@
             updateMeta();
 
             const jsonObj = buildJsonObject();
-            const svgNormal = buildSvgMarkup({ alt: false });
-            const svgAlt = buildSvgMarkup({ alt: true });
+            const svg = buildSvgMarkup();
             const bs = jsonObj.glyph.bitstring;
             const count = jsonObj.glyph.enabled_count;
 
             jsonOutput.value = JSON.stringify(jsonObj, null, 2);
-            svgOutput.value = svgNormal;
-            svgAltOutput.value = svgAlt;
+            svgOutput.value = svg;
 
             enabledCountPill.textContent = `Enabled: ${count}`;
             bitPreviewPill.textContent = `Bits: ${bs.slice(0, 16)}…`;
         }
 
         function fillAll(value) {
-            for (let r = 0; r < ROWS; r++) {
-                for (let c = 0; c < COLS; c++) {
-                    for (let t = 0; t < TRI_ORDER.length; t++) {
-                        grid[r][c][t] = value ? 1 : 0;
-                        setTriVisual(r,c,t);
-                    }
-                }
-            }
+            clearGrid(value ? 1 : 0);
+            refreshEditorVisuals();
             updateOutputs();
         }
 
@@ -695,10 +830,10 @@
                 for (let c = 0; c < COLS; c++) {
                     for (let t = 0; t < TRI_ORDER.length; t++) {
                         grid[r][c][t] = grid[r][c][t] ? 0 : 1;
-                        setTriVisual(r,c,t);
                     }
                 }
             }
+            refreshEditorVisuals();
             updateOutputs();
         }
 
@@ -733,42 +868,187 @@
             setTimeout(() => (btn.textContent = original), ms);
         }
 
+        // ---------------------------
+        // SVG loading (file + textarea)
+        // Supports:
+        // - id="r0c0-top"
+        // - class="r0c0-top"
+        // - data-variant="alt" (inverse occupancy)
+        // ---------------------------
+
+        function selectorFromPolygon(poly) {
+            const id = (poly.getAttribute("id") || "").trim();
+            if (TRI_RE.test(id)) return id;
+
+            const cls = (poly.getAttribute("class") || "").trim();
+            if (cls) {
+                const tokens = cls.split(/\s+/);
+                for (const token of tokens) {
+                    if (TRI_RE.test(token)) return token;
+                }
+            }
+            return "";
+        }
+
+        function deriveCharFromRoot(root, fallbackFileName = "") {
+            const dataChar = (root.getAttribute("data-char") || "");
+            if (Array.from(dataChar).length >= 1) return Array.from(dataChar)[0];
+
+            const dataCodepoint = (root.getAttribute("data-codepoint") || "").trim();
+            const mCp = dataCodepoint.match(/^U\+([0-9A-Fa-f]+)$/);
+            if (mCp) {
+                try {
+                    return String.fromCodePoint(parseInt(mCp[1], 16));
+                } catch {}
+            }
+
+            const mFile = fallbackFileName.match(/character-u([0-9A-Fa-f]+)(?:-alt)?\.svg$/);
+            if (mFile) {
+                try {
+                    return String.fromCodePoint(parseInt(mFile[1], 16));
+                } catch {}
+            }
+
+            return null;
+        }
+
+        function loadGridFromSvgText(svgText, sourceName = "") {
+            const parser = new DOMParser();
+            const doc = parser.parseFromString(svgText, "image/svg+xml");
+            const parserError = doc.querySelector("parsererror");
+            if (parserError) {
+                throw new Error("Invalid SVG/XML");
+            }
+
+            const root = doc.documentElement;
+            if (!root || root.tagName.toLowerCase() !== "svg") {
+                throw new Error("No <svg> root found");
+            }
+
+            const variant = (root.getAttribute("data-variant") || "").toLowerCase();
+            const isAlt = variant === "alt";
+
+            // normal SVG: start with all zeros, present polygons => 1
+            // alt SVG:    start with all ones, present polygons => 0
+            clearGrid(isAlt ? 1 : 0);
+
+            let matched = 0;
+            const seen = new Set();
+
+            const polys = root.querySelectorAll("polygon");
+            polys.forEach(poly => {
+                const selector = selectorFromPolygon(poly);
+                if (!selector) return;
+                if (seen.has(selector)) return;
+                seen.add(selector);
+
+                const m = selector.match(TRI_RE);
+                if (!m) return;
+
+                const r = Number(m[1]);
+                const c = Number(m[2]);
+                const triName = m[3];
+                const t = triIndexFromName(triName);
+
+                if (r < 0 || r >= ROWS || c < 0 || c >= COLS || t < 0) return;
+
+                grid[r][c][t] = isAlt ? 0 : 1;
+                matched++;
+            });
+
+            const ch = deriveCharFromRoot(root, sourceName);
+            if (ch) charInput.value = ch;
+
+            refreshEditorVisuals();
+            updateOutputs();
+
+            if (matched === 0) {
+                setStatus("Loaded SVG, but no matching polygons found", "warn");
+            } else {
+                setStatus(`Loaded ${matched} polygon(s)${isAlt ? " (alt interpreted)" : ""}`, "ok");
+            }
+        }
+
+        async function loadSvgFile(file) {
+            const text = await file.text();
+            loadGridFromSvgText(text, file.name);
+        }
+
+        // ---------------------------
         // Wire up controls
+        // ---------------------------
+
         charInput.addEventListener("input", () => updateOutputs());
-        clearBtn.addEventListener("click", () => fillAll(false));
-        fillBtn.addEventListener("click", () => fillAll(true));
-        invertBtn.addEventListener("click", invertAll);
+
+        clearBtn.addEventListener("click", () => {
+            fillAll(false);
+            setStatus("Cleared glyph", "ok");
+        });
+
+        fillBtn.addEventListener("click", () => {
+            fillAll(true);
+            setStatus("Filled glyph", "ok");
+        });
+
+        invertBtn.addEventListener("click", () => {
+            invertAll();
+            setStatus("Inverted glyph", "ok");
+        });
 
         copyJsonBtn.addEventListener("click", async () => {
             await copyText(jsonOutput.value);
             flashButton(copyJsonBtn, "Copied JSON");
+            setStatus("JSON copied", "ok");
         });
 
         copySvgBtn.addEventListener("click", async () => {
             await copyText(svgOutput.value);
             flashButton(copySvgBtn, "Copied SVG");
-        });
-
-        copySvgAltBtn.addEventListener("click", async () => {
-            await copyText(svgAltOutput.value);
-            flashButton(copySvgAltBtn, "Copied alt SVG");
+            setStatus("SVG copied", "ok");
         });
 
         saveSvgBtn.addEventListener("click", () => {
             const info = getCurrentCharInfo();
             saveTextFile(info.filename, svgOutput.value);
             flashButton(saveSvgBtn, "Saved SVG");
+            setStatus(`Saved ${info.filename}`, "ok");
         });
 
-        saveSvgAltBtn.addEventListener("click", () => {
-            const info = getCurrentCharInfo();
-            saveTextFile(info.altFilename, svgAltOutput.value);
-            flashButton(saveSvgAltBtn, "Saved alt SVG");
+        loadSvgBtn.addEventListener("click", () => {
+            loadSvgInput.click();
         });
 
+        loadSvgInput.addEventListener("change", async () => {
+            const file = loadSvgInput.files && loadSvgInput.files[0];
+            if (!file) return;
+            try {
+                await loadSvgFile(file);
+            } catch (err) {
+                console.error(err);
+                setStatus(`Load failed: ${err.message || err}`, "warn");
+            } finally {
+                // allow re-selecting same file
+                loadSvgInput.value = "";
+            }
+        });
+
+        loadSvgTextBtn.addEventListener("click", () => {
+            try {
+                loadGridFromSvgText(svgOutput.value, "textarea");
+            } catch (err) {
+                console.error(err);
+                setStatus(`Load from text failed: ${err.message || err}`, "warn");
+            }
+        });
+
+        // ---------------------------
         // Init
+        // ---------------------------
+
+        initThemeMode();
         buildEditorSvg();
         updateOutputs();
+        setStatus("Ready");
     })();
 </script>
 </body>

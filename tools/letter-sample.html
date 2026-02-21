@@ -78,12 +78,22 @@
         }
 
         input[type="range"]{ width: 100%; }
-        input[type="text"]{
+        input[type="text"],
+        textarea{
             width: 100%;
             padding: 10px 12px;
             border: 1px solid #ddd;
             border-radius: 10px;
             font-size: 14px;
+            box-sizing: border-box;
+        }
+
+        textarea{
+            resize: vertical;
+            min-height: 110px;
+            font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, "Liberation Mono", monospace;
+            line-height: 1.35;
+            white-space: pre;
         }
 
         .btn{
@@ -209,6 +219,7 @@
 
     <div class="card meta" id="meta">
         <span class="pill"><span class="dot" id="fontDot"></span><span id="fontStatus">Loading font…</span></span>
+        <span class="pill"><span class="dot" id="manifestDot"></span><span id="manifestStatus">Manifest…</span></span>
         <span class="pill">Axis <code>"GAP "</code> (Gap): <code id="gapReadout">1.00</code></span>
         <span class="pill">Range: <code>0.50</code> → <code>2.00</code> (default <code>1.00</code>)</span>
         <span class="pill">File: <code>../dist/fonts/mmxx-vf.woff2</code></span>
@@ -239,13 +250,14 @@
 
             <div style="display:grid;gap:8px;">
                 <label for="text">Sample text</label>
-                <input id="text" type="text" value="abcdefghijklmnopqrstuvwxyz&#10;the quick brown fox jumps over the lazy dog.&#10;0123456789" />
-                <div class="hint">Tip: the generator auto-discovers <code>src/character-*.svg</code> (digits included if present).</div>
+                <!-- textarea so newlines + "all glyphs" defaults work -->
+                <textarea id="text" rows="5" spellcheck="false"></textarea>
+                <div class="hint">Default glyphs are loaded from <code>../data/manifest.json</code> → <code>unicodeRanges</code>.</div>
             </div>
 
             <div style="display:flex;gap:10px;flex-wrap:wrap;">
-                <button class="btn" id="presetAlphabet">Alphabet</button>
-                <button class="btn" id="presetPangram">Pangram</button>
+                <button class="btn" id="presetAlphabet">All glyphs</button>
+                <button class="btn" id="presetPangram">Pangram (if a–z)</button>
                 <button class="btn" id="presetSingle">Single letter</button>
                 <button class="btn" id="presetMin">Gap 50%</button>
                 <button class="btn" id="presetMax">Gap 200%</button>
@@ -266,7 +278,12 @@
 
 <script>
     const AXIS_TAG = "GAP ";   // IMPORTANT: trailing space
-    const MIN = 0.5, DEF = 1.0, MAX = 2.0;
+    const MIN = 0.5, MAX = 2.0;
+
+    // --- MANIFEST
+    const MANIFEST_URL = "../data/manifest.json";
+    let manifestGlyphs = null; // { all, letters, digits, punct, other, allText }
+    let userEditedText = false;
 
     // --- DOM
     const root = document.documentElement;
@@ -287,6 +304,9 @@
 
     const fontDot = document.getElementById("fontDot");
     const fontStatus = document.getElementById("fontStatus");
+
+    const manifestDot = document.getElementById("manifestDot");
+    const manifestStatus = document.getElementById("manifestStatus");
 
     const cssSnippet = document.getElementById("cssSnippet");
 
@@ -334,7 +354,6 @@ font-size: ${sizeVal}px;`;
 
         const t = (text.value ?? "").replace(/\r\n/g, "\n");
         sample.textContent = t;
-
         bigLetter.textContent = pickBigGlyph(t);
     }
 
@@ -352,6 +371,164 @@ font-size: ${sizeVal}px;`;
         syncFromUI();
     }
 
+    // --- MANIFEST parsing helpers
+    function parseCodepoint(v){
+        if (typeof v === "number" && Number.isFinite(v)) return v;
+        if (typeof v !== "string") return NaN;
+        let t = v.trim().toUpperCase();
+        t = t.replace(/^U\+/, "");
+        if (t.startsWith("0X")) return parseInt(t, 16);
+        if (/^[0-9A-F]+$/.test(t)) return parseInt(t, 16);
+        if (/^\d+$/.test(t)) return parseInt(t, 10);
+        return NaN;
+    }
+
+    function parseUnicodeRangesValue(ur){
+        const out = [];
+        if (!ur) return out;
+
+        if (Array.isArray(ur)){
+            for (const item of ur){
+                if (Array.isArray(item) && item.length >= 2){
+                    const a = parseCodepoint(item[0]);
+                    const b = parseCodepoint(item[1]);
+                    if (Number.isFinite(a) && Number.isFinite(b)) out.push([Math.min(a,b), Math.max(a,b)]);
+                }
+            }
+        }
+        return out;
+    }
+
+    function extractUnicodeRanges(manifest){
+        // Your manifest uses top-level unicodeRanges: [[start,end],...]
+        const direct = manifest?.unicodeRanges ?? manifest?.metadata?.unicodeRanges;
+        const parsed = parseUnicodeRangesValue(direct);
+        if (parsed.length) return parsed;
+
+        // Fallback deep-search (safe)
+        const visited = new WeakSet();
+        const foundValues = [];
+
+        (function walk(node){
+            if (!node || typeof node !== "object") return;
+            if (visited.has(node)) return;
+            visited.add(node);
+
+            if (Object.prototype.hasOwnProperty.call(node, "unicodeRanges")){
+                foundValues.push(node.unicodeRanges);
+            }
+            for (const k of Object.keys(node)) walk(node[k]);
+        })(manifest);
+
+        for (const v of foundValues){
+            const p = parseUnicodeRangesValue(v);
+            if (p.length) return p;
+        }
+        return [];
+    }
+
+    function isPrintableCodepoint(cp){
+        if (cp === 0x20) return true;                  // space
+        if (cp < 0x20) return false;                   // C0 controls
+        if (cp >= 0x7F && cp <= 0x9F) return false;    // C1 controls
+        return true;
+    }
+
+    function buildGlyphSets(ranges){
+        const letters = new Set();
+        const digits  = new Set();
+        const punct   = new Set();
+        const other   = new Set();
+        const all     = new Set();
+
+        const asciiPunct = `!"#$%&'()*+,-./:;<=>?@[\\]^_\`{|}~`;
+
+        for (const [start, end] of ranges){
+            const a = Math.max(0, start|0);
+            const b = Math.min(0x10FFFF, end|0);
+            for (let cp = a; cp <= b; cp++){
+                if (!isPrintableCodepoint(cp)) continue;
+
+                // exclude Latin uppercase
+                if (cp >= 0x41 && cp <= 0x5A) continue;
+
+                const ch = String.fromCodePoint(cp);
+                all.add(ch);
+
+                if (cp >= 0x61 && cp <= 0x7A) letters.add(ch);
+                else if (cp >= 0x30 && cp <= 0x39) digits.add(ch);
+                else if (asciiPunct.includes(ch)) punct.add(ch);
+                else other.add(ch);
+            }
+        }
+
+        const byCp = (x, y) => x.codePointAt(0) - y.codePointAt(0);
+
+        const lettersArr = Array.from(letters).sort(byCp);
+        const digitsArr  = Array.from(digits).sort(byCp);
+        const punctArr   = Array.from(punct).sort(byCp);
+        const otherArr   = Array.from(other).sort(byCp);
+        const allArr     = Array.from(all).sort(byCp);
+
+        // Default sample text = ALL available glyphs, grouped for readability.
+        // (This will include "#$." from your manifest.)
+        const lines = [];
+        if (lettersArr.length) lines.push(lettersArr.join(""));
+        if (digitsArr.length)  lines.push(digitsArr.join(""));
+        if (punctArr.length)   lines.push(punctArr.join(""));
+        if (otherArr.length)   lines.push(otherArr.join(""));
+
+        return {
+            all: allArr,
+            letters: lettersArr,
+            digits: digitsArr,
+            punct: punctArr,
+            other: otherArr,
+            allText: lines.join("\n")
+        };
+    }
+
+    async function loadManifestGlyphs(){
+        manifestDot.classList.remove("ok", "bad");
+        manifestStatus.textContent = "Manifest…";
+
+        try{
+            const res = await fetch(MANIFEST_URL, { cache: "no-store" });
+            if (!res.ok) throw new Error(`manifest fetch failed: ${res.status}`);
+            const manifest = await res.json();
+
+            const ranges = extractUnicodeRanges(manifest);
+            if (!ranges.length){
+                manifestDot.classList.add("bad");
+                manifestStatus.textContent = "Manifest has no unicodeRanges";
+                return null;
+            }
+
+            const glyphs = buildGlyphSets(ranges);
+            manifestGlyphs = glyphs;
+
+            manifestDot.classList.add("ok");
+            manifestStatus.textContent =
+                `Manifest loaded (${glyphs.all.length} glyphs; ${glyphs.punct.length} punct)`;
+
+            return glyphs;
+        }catch(e){
+            manifestDot.classList.add("bad");
+            manifestStatus.textContent = "Manifest failed to load";
+            return null;
+        }
+    }
+
+    async function applyDefaultFromManifest(){
+        const glyphs = await loadManifestGlyphs();
+        if (!glyphs || !glyphs.allText) return;
+
+        // Key change: set defaults from manifest unless the user already typed.
+        if (!userEditedText){
+            text.value = glyphs.allText;
+        }
+    }
+
     // --- events
     gap.addEventListener("input", syncFromUI);
     size.addEventListener("input", syncFromUI);
@@ -359,21 +536,42 @@ font-size: ${sizeVal}px;`;
     gapNum.addEventListener("change", syncGapFromText);
     sizeNum.addEventListener("change", syncSizeFromText);
 
-    text.addEventListener("input", syncFromUI);
+    text.addEventListener("input", () => {
+        userEditedText = true;
+        syncFromUI();
+    });
+
     saltToggle.addEventListener("change", syncFromUI);
 
     document.getElementById("presetAlphabet").addEventListener("click", () => {
-        text.value = "abcdefghijklmnopqrstuvwxyz\n0123456789";
+        if (manifestGlyphs?.allText){
+            text.value = manifestGlyphs.allText;
+        } else {
+            text.value = "abcdefghijklmnopqrstuvwxyz\n0123456789\n#$.\n";
+        }
+        userEditedText = true;
         syncFromUI();
     });
 
     document.getElementById("presetPangram").addEventListener("click", () => {
-        text.value = "the quick brown fox jumps over the lazy dog.\nabcdefghijklmnopqrstuvwxyz\n0123456789";
+        const hasFullAZ = manifestGlyphs?.letters?.length === 26
+            && manifestGlyphs.letters.join("") === "abcdefghijklmnopqrstuvwxyz";
+
+        if (hasFullAZ){
+            text.value = "the quick brown fox jumps over the lazy dog.\nabcdefghijklmnopqrstuvwxyz\n0123456789";
+        } else if (manifestGlyphs?.allText){
+            text.value = manifestGlyphs.allText;
+        } else {
+            text.value = "the quick brown fox jumps over the lazy dog.\nabcdefghijklmnopqrstuvwxyz\n0123456789";
+        }
+        userEditedText = true;
         syncFromUI();
     });
 
     document.getElementById("presetSingle").addEventListener("click", () => {
-        text.value = "a";
+        const ch = manifestGlyphs?.letters?.[0] ?? "a";
+        text.value = ch;
+        userEditedText = true;
         syncFromUI();
     });
 
@@ -412,7 +610,12 @@ font-size: ${sizeVal}px;`;
     })();
 
     // init
-    syncFromUI();
+    (async () => {
+        // show something immediately
+        text.value = "Loading glyphs from manifest…";
+        await applyDefaultFromManifest();
+        syncFromUI();
+    })();
 </script>
 </body>
 </html>
