@@ -1,0 +1,34 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="240" height="240" viewBox="0 0 240 240" data-codepoint="U+006F" data-char="o" data-variant="alt">
+    <title>Glyph U+006F (o) alt</title>
+    <desc>Generated glyph for U+006F | LATIN SMALL LETTER O | grid 8x8 | 256 bits | inverse occupancy (0=active,1=inactive)</desc>
+
+    <!-- Background -->
+    <rect x="0" y="0" width="240" height="240" fill="#fff"/>
+
+    <!-- Grid cells, each cell has 4 editable triangles (class-based selectors) -->
+    <g fill="#000" shape-rendering="crispEdges">
+
+
+
+        <polygon class="r3c3-top" points="90,90 120,90 105,105"/>
+        <polygon class="r3c3-right" points="120,90 120,120 105,105"/>
+        <polygon class="r3c3-bottom" points="120,120 90,120 105,105"/>
+        <polygon class="r3c3-left" points="90,120 90,90 105,105"/>
+        <polygon class="r3c4-top" points="120,90 150,90 135,105"/>
+        <polygon class="r3c4-right" points="150,90 150,120 135,105"/>
+        <polygon class="r3c4-bottom" points="150,120 120,120 135,105"/>
+        <polygon class="r3c4-left" points="120,120 120,90 135,105"/>
+
+        <polygon class="r4c3-top" points="90,120 120,120 105,135"/>
+        <polygon class="r4c3-right" points="120,120 120,150 105,135"/>
+        <polygon class="r4c3-bottom" points="120,150 90,150 105,135"/>
+        <polygon class="r4c3-left" points="90,150 90,120 105,135"/>
+        <polygon class="r4c4-top" points="120,120 150,120 135,135"/>
+        <polygon class="r4c4-right" points="150,120 150,150 135,135"/>
+        <polygon class="r4c4-bottom" points="150,150 120,150 135,135"/>
+        <polygon class="r4c4-left" points="120,150 120,120 135,135"/>
+
+
+
+    </g>
+</svg>

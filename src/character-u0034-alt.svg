@@ -1,0 +1,30 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="240" height="240" viewBox="0 0 240 240" data-codepoint="U+0034" data-char="4" data-variant="alt">
+    <title>Glyph U+0034 (4) alt</title>
+    <desc>Generated glyph for U+0034 | DIGIT FOUR | grid 8x8 | 256 bits | inverse occupancy (0=active,1=inactive)</desc>
+
+    <!-- Background -->
+    <rect x="0" y="0" width="240" height="240" fill="#fff"/>
+
+    <!-- Grid cells, each cell has 4 editable triangles (class-based selectors) -->
+    <g fill="#000" shape-rendering="crispEdges">
+        <polygon class="r0c0-top" points="0,0 30,0 15,15"/>
+        <polygon class="r0c0-left" points="0,30 0,0 15,15"/>
+
+
+
+        <polygon class="r3c3-right" points="120,90 120,120 105,105"/>
+        <polygon class="r3c3-bottom" points="120,120 90,120 105,105"/>
+
+
+
+
+        <polygon class="r7c0-top" points="0,210 30,210 15,225"/>
+        <polygon class="r7c0-right" points="30,210 30,240 15,225"/>
+        <polygon class="r7c0-bottom" points="30,240 0,240 15,225"/>
+        <polygon class="r7c0-left" points="0,240 0,210 15,225"/>
+        <polygon class="r7c1-top" points="30,210 60,210 45,225"/>
+        <polygon class="r7c1-right" points="60,210 60,240 45,225"/>
+        <polygon class="r7c1-bottom" points="60,240 30,240 45,225"/>
+        <polygon class="r7c1-left" points="30,240 30,210 45,225"/>
+    </g>
+</svg>

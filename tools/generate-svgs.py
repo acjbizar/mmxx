@@ -12,6 +12,7 @@ Supported input sources:
 
 Output SVGs:
 - src/character-u{codepoint}.svg
+- src/character-u{codepoint}-alt.svg   (inverse occupancy: 0=active, 1=inactive)
 
 Polygon selector format in output:
 - class="r{row}c{col}-{top|right|bottom|left}"
@@ -19,10 +20,10 @@ Polygon selector format in output:
 
 The SVG also includes character metadata in sensible places:
 - <title> and <desc>
-- root attributes: data-codepoint, data-char
+- root attributes: data-codepoint, data-char, data-variant
 
 Examples:
-  # Default: read data/glyphs_bits.py and write into src/
+  # Default: read data/glyphs_bits.py and write into src/ (normal + alt)
   py tools/generate-svgs.py
 
   # Read from JSON instead
@@ -33,6 +34,9 @@ Examples:
 
   # Export into another directory
   py tools/generate-svgs.py --out-dir src/generated-glyphs
+
+  # Skip the -alt inverse files
+  py tools/generate-svgs.py --no-alt
 """
 from __future__ import annotations
 
@@ -44,7 +48,7 @@ import sys
 import unicodedata
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Dict, Iterable, List, Sequence, Tuple
+from typing import Dict, List, Sequence, Tuple
 from xml.sax.saxutils import escape as xml_escape
 
 # ---------------------------------------------------------------------------
@@ -98,18 +102,7 @@ def _is_printable_char(ch: str) -> bool:
 
 
 def _safe_char_for_attr(ch: str) -> str:
-    # Keep only printable chars in data-char; otherwise empty.
     return ch if _is_printable_char(ch) else ""
-
-
-def _char_label(cp: int) -> str:
-    try:
-        ch = chr(cp)
-    except ValueError:
-        return f"U+{cp:04X}"
-    if _is_printable_char(ch):
-        return f"U+{cp:04X} ({ch})"
-    return f"U+{cp:04X}"
 
 
 def _unicode_name(cp: int) -> str:
@@ -176,9 +169,7 @@ def _bit_count(meta: GlyphMeta) -> int:
 
 def _validate_bitstring(bitstring: str, expected_len: int, label: str) -> None:
     if len(bitstring) != expected_len:
-        raise ValueError(
-            f"{label}: bitstring length {len(bitstring)} != expected {expected_len}"
-        )
+        raise ValueError(f"{label}: bitstring length {len(bitstring)} != expected {expected_len}")
     bad = set(bitstring) - {"0", "1"}
     if bad:
         raise ValueError(f"{label}: bitstring contains non-binary chars: {sorted(bad)}")
@@ -189,9 +180,7 @@ def _grid_to_bitstring(grid: Sequence[Sequence[Sequence[int]]], triangle_order_l
     for row in grid:
         for cell in row:
             if len(cell) != triangle_order_len:
-                raise ValueError(
-                    f"Grid cell has {len(cell)} entries, expected {triangle_order_len}"
-                )
+                raise ValueError(f"Grid cell has {len(cell)} entries, expected {triangle_order_len}")
             for v in cell:
                 bits.append("1" if int(v) else "0")
     return "".join(bits)
@@ -201,7 +190,7 @@ def _choose_default_source() -> Path:
     for p in DEFAULT_SOURCE_CANDIDATES:
         if p.exists():
             return p
-    return DEFAULT_SOURCE_CANDIDATES[0]  # fallback path (nice error later)
+    return DEFAULT_SOURCE_CANDIDATES[0]
 
 
 # ---------------------------------------------------------------------------
@@ -239,7 +228,6 @@ def load_from_bits_py(path: Path) -> Tuple[GlyphMeta, Dict[int, GlyphRecord]]:
         return meta, dict(sorted(glyphs.items()))
 
     if hasattr(mod, "GLYPHS"):
-        # Support glyphs_data.py too
         raw = getattr(mod, "GLYPHS")
         if not isinstance(raw, dict):
             raise ValueError(f"{path}: GLYPHS is not a dict")
@@ -289,7 +277,6 @@ def load_from_json(path: Path) -> Tuple[GlyphMeta, Dict[int, GlyphRecord]]:
 
         cp = payload.get("codepoint")
         if cp is None:
-            # fallback from key "u0032"
             m = FILENAME_HEX_RE.match(str(key))
             if not m:
                 raise ValueError(f"{path}: glyph entry {key!r} missing codepoint and invalid key")
@@ -337,10 +324,13 @@ def load_glyph_source(source_path: Path) -> Tuple[GlyphMeta, Dict[int, GlyphReco
 # SVG rendering
 # ---------------------------------------------------------------------------
 
-def _glyph_filename(rec: GlyphRecord, hex_width: int, preserve_source_hex: bool) -> str:
+def _glyph_filename(rec: GlyphRecord, hex_width: int, preserve_source_hex: bool, alt: bool = False) -> str:
     if preserve_source_hex and rec.source_hex:
-        return f"character-u{rec.source_hex}.svg"
-    return f"character-u{rec.codepoint:0{hex_width}x}.svg"
+        base_hex = rec.source_hex
+    else:
+        base_hex = f"{rec.codepoint:0{hex_width}x}"
+    suffix = "-alt" if alt else ""
+    return f"character-u{base_hex}{suffix}.svg"
 
 
 def render_svg(
@@ -348,6 +338,8 @@ def render_svg(
     meta: GlyphMeta,
     fg_fill: str = "#000",
     bg_fill: str = "#fff",
+    *,
+    alt: bool = False,
 ) -> str:
     rows, cols, cell_size = meta.rows, meta.cols, meta.cell_size
     tri_order = meta.triangle_order
@@ -365,7 +357,9 @@ def render_svg(
     cp_hex = f"U+{rec.codepoint:04X}"
     title_txt = f"Glyph {cp_hex}"
     if ch:
-        title_txt += f" ({ch})"
+      title_txt += f" ({ch})"
+    if alt:
+      title_txt += " alt"
 
     uname = _unicode_name(rec.codepoint)
     desc_parts = [f"Generated glyph for {cp_hex}"]
@@ -373,13 +367,18 @@ def render_svg(
         desc_parts.append(uname)
     desc_parts.append(f"grid {rows}x{cols}")
     desc_parts.append(f"{len(rec.bitstring)} bits")
+    desc_parts.append("inverse occupancy (0=active,1=inactive)" if alt else "normal occupancy (1=active,0=inactive)")
     desc_txt = " | ".join(desc_parts)
+
+    variant = "alt" if alt else "normal"
 
     out: List[str] = []
     out.append(
         f'<svg xmlns="http://www.w3.org/2000/svg" '
         f'width="{w}" height="{h}" viewBox="0 0 {w} {h}" '
-        f'data-codepoint="{xml_escape(cp_hex)}" data-char="{xml_escape(_safe_char_for_attr(ch))}">'
+        f'data-codepoint="{xml_escape(cp_hex)}" '
+        f'data-char="{xml_escape(_safe_char_for_attr(ch))}" '
+        f'data-variant="{variant}">'
     )
     out.append(f"    <title>{xml_escape(title_txt)}</title>")
     out.append(f"    <desc>{xml_escape(desc_txt)}</desc>")
@@ -390,19 +389,17 @@ def render_svg(
     out.append("    <!-- Grid cells, each cell has 4 editable triangles (class-based selectors) -->")
     out.append(f'    <g fill="{xml_escape(fg_fill)}" shape-rendering="crispEdges">')
 
-    tri_count = len(tri_order)
     idx = 0
     for r in range(rows):
         for c in range(cols):
             for tri in tri_order:
                 bit = rec.bitstring[idx]
                 idx += 1
-                if bit != "1":
+                is_active = (bit == "0") if alt else (bit == "1")
+                if not is_active:
                     continue
                 pts = _points_for_triangle(r, c, tri, cell_size)
-                out.append(
-                    f'        <polygon class="r{r}c{c}-{tri}" points="{pts}"/>'
-                )
+                out.append(f'        <polygon class="r{r}c{c}-{tri}" points="{pts}"/>')
         if r != rows - 1:
             out.append("")
 
@@ -422,6 +419,7 @@ def write_svgs(
     hex_width: int,
     preserve_source_hex: bool,
     only: set[int] | None = None,
+    write_alt: bool = True,
 ) -> int:
     out_dir.mkdir(parents=True, exist_ok=True)
     written = 0
@@ -430,16 +428,28 @@ def write_svgs(
         if only is not None and cp not in only:
             continue
 
-        filename = _glyph_filename(rec, hex_width=hex_width, preserve_source_hex=preserve_source_hex)
-        path = out_dir / filename
+        # Normal file
+        normal_name = _glyph_filename(rec, hex_width=hex_width, preserve_source_hex=preserve_source_hex, alt=False)
+        normal_path = out_dir / normal_name
 
-        if path.exists() and not overwrite:
-            print(f"[skip] {path} exists (use --overwrite to replace)")
-            continue
+        if normal_path.exists() and not overwrite:
+            print(f"[skip] {normal_path} exists (use --overwrite to replace)")
+        else:
+            svg = render_svg(rec, meta=meta, fg_fill=fg_fill, bg_fill=bg_fill, alt=False)
+            normal_path.write_text(svg, encoding="utf-8")
+            written += 1
 
-        svg = render_svg(rec, meta=meta, fg_fill=fg_fill, bg_fill=bg_fill)
-        path.write_text(svg, encoding="utf-8")
-        written += 1
+        # Alt file (inverse occupancy)
+        if write_alt:
+            alt_name = _glyph_filename(rec, hex_width=hex_width, preserve_source_hex=preserve_source_hex, alt=True)
+            alt_path = out_dir / alt_name
+
+            if alt_path.exists() and not overwrite:
+                print(f"[skip] {alt_path} exists (use --overwrite to replace)")
+            else:
+                alt_svg = render_svg(rec, meta=meta, fg_fill=fg_fill, bg_fill=bg_fill, alt=True)
+                alt_path.write_text(alt_svg, encoding="utf-8")
+                written += 1
 
     return written
 
@@ -482,8 +492,9 @@ def parse_args() -> argparse.Namespace:
 
     p.add_argument("--fg-fill", default="#000", help="Foreground polygon fill (default: #000)")
     p.add_argument("--bg-fill", default="#fff", help="Background fill (default: #fff)")
+    p.add_argument("--no-alt", action="store_true", help="Do not generate -alt inverse SVGs")
 
-    # Optional overrides (handy if source metadata is missing or you want to force geometry)
+    # Optional overrides
     p.add_argument("--rows", type=int, default=None, help="Override rows from source metadata")
     p.add_argument("--cols", type=int, default=None, help="Override cols from source metadata")
     p.add_argument("--cell-size", type=int, default=None, help="Override cell size from source metadata")
@@ -500,7 +511,6 @@ def main() -> int:
         print(f"Error loading source: {e}", file=sys.stderr)
         return 1
 
-    # Apply optional metadata overrides
     if args.rows is not None:
         meta.rows = int(args.rows)
     if args.cols is not None:
@@ -530,11 +540,13 @@ def main() -> int:
                 print(f"Invalid --only token {token!r}: {e}", file=sys.stderr)
                 return 2
 
-    total = len(glyphs) if only_set is None else sum(1 for cp in glyphs if cp in only_set)
+    glyph_total = len(glyphs) if only_set is None else sum(1 for cp in glyphs if cp in only_set)
+    variant_count = 1 if args.no_alt else 2
+
     print(f"Loaded {len(glyphs)} glyph(s) from {args.source}")
     print(f"Geometry: {meta.rows}x{meta.cols} cells, cell={meta.cell_size}px, triangles={meta.triangle_order}")
     print(f"Bits per glyph: {expected_len}")
-    print(f"About to export: {total} glyph(s)")
+    print(f"About to export: {glyph_total} glyph(s) × {variant_count} variant(s)")
 
     try:
         written = write_svgs(
@@ -547,12 +559,13 @@ def main() -> int:
             hex_width=max(1, int(args.hex_width)),
             preserve_source_hex=not args.no_preserve_source_hex,
             only=only_set,
+            write_alt=not args.no_alt,
         )
     except Exception as e:
         print(f"Error writing SVGs: {e}", file=sys.stderr)
         return 1
 
-    print(f"Exported {written} SVG(s) to {args.out_dir}")
+    print(f"Exported {written} SVG file(s) to {args.out_dir}")
     return 0
 
 

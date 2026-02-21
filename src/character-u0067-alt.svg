@@ -1,0 +1,38 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="240" height="240" viewBox="0 0 240 240" data-codepoint="U+0067" data-char="g" data-variant="alt">
+    <title>Glyph U+0067 (g) alt</title>
+    <desc>Generated glyph for U+0067 | LATIN SMALL LETTER G | grid 8x8 | 256 bits | inverse occupancy (0=active,1=inactive)</desc>
+
+    <!-- Background -->
+    <rect x="0" y="0" width="240" height="240" fill="#fff"/>
+
+    <!-- Grid cells, each cell has 4 editable triangles (class-based selectors) -->
+    <g fill="#000" shape-rendering="crispEdges">
+
+
+
+        <polygon class="r3c4-top" points="120,90 150,90 135,105"/>
+        <polygon class="r3c4-right" points="150,90 150,120 135,105"/>
+        <polygon class="r3c4-bottom" points="150,120 120,120 135,105"/>
+        <polygon class="r3c4-left" points="120,120 120,90 135,105"/>
+        <polygon class="r3c5-top" points="150,90 180,90 165,105"/>
+        <polygon class="r3c5-right" points="180,90 180,120 165,105"/>
+        <polygon class="r3c5-bottom" points="180,120 150,120 165,105"/>
+        <polygon class="r3c5-left" points="150,120 150,90 165,105"/>
+        <polygon class="r3c6-top" points="180,90 210,90 195,105"/>
+        <polygon class="r3c6-right" points="210,90 210,120 195,105"/>
+        <polygon class="r3c6-bottom" points="210,120 180,120 195,105"/>
+        <polygon class="r3c6-left" points="180,120 180,90 195,105"/>
+        <polygon class="r3c7-top" points="210,90 240,90 225,105"/>
+        <polygon class="r3c7-right" points="240,90 240,120 225,105"/>
+        <polygon class="r3c7-bottom" points="240,120 210,120 225,105"/>
+        <polygon class="r3c7-left" points="210,120 210,90 225,105"/>
+
+        <polygon class="r4c4-top" points="120,120 150,120 135,135"/>
+        <polygon class="r4c4-right" points="150,120 150,150 135,135"/>
+        <polygon class="r4c4-bottom" points="150,150 120,150 135,135"/>
+        <polygon class="r4c4-left" points="120,150 120,120 135,135"/>
+
+
+
+    </g>
+</svg>

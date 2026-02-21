@@ -1,0 +1,26 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="240" height="240" viewBox="0 0 240 240" data-codepoint="U+006D" data-char="m" data-variant="alt">
+    <title>Glyph U+006D (m) alt</title>
+    <desc>Generated glyph for U+006D | LATIN SMALL LETTER M | grid 8x8 | 256 bits | inverse occupancy (0=active,1=inactive)</desc>
+
+    <!-- Background -->
+    <rect x="0" y="0" width="240" height="240" fill="#fff"/>
+
+    <!-- Grid cells, each cell has 4 editable triangles (class-based selectors) -->
+    <g fill="#000" shape-rendering="crispEdges">
+        <polygon class="r0c3-top" points="90,0 120,0 105,15"/>
+        <polygon class="r0c3-right" points="120,0 120,30 105,15"/>
+        <polygon class="r0c4-top" points="120,0 150,0 135,15"/>
+        <polygon class="r0c4-left" points="120,30 120,0 135,15"/>
+
+
+
+
+
+
+
+        <polygon class="r7c3-bottom" points="120,240 90,240 105,225"/>
+        <polygon class="r7c3-left" points="90,240 90,210 105,225"/>
+        <polygon class="r7c4-right" points="150,210 150,240 135,225"/>
+        <polygon class="r7c4-bottom" points="150,240 120,240 135,225"/>
+    </g>
+</svg>

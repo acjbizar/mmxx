@@ -1,0 +1,30 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="240" height="240" viewBox="0 0 240 240" data-codepoint="U+0036" data-char="6" data-variant="alt">
+    <title>Glyph U+0036 (6) alt</title>
+    <desc>Generated glyph for U+0036 | DIGIT SIX | grid 8x8 | 256 bits | inverse occupancy (0=active,1=inactive)</desc>
+
+    <!-- Background -->
+    <rect x="0" y="0" width="240" height="240" fill="#fff"/>
+
+    <!-- Grid cells, each cell has 4 editable triangles (class-based selectors) -->
+    <g fill="#000" shape-rendering="crispEdges">
+        <polygon class="r0c6-top" points="180,0 210,0 195,15"/>
+        <polygon class="r0c6-right" points="210,0 210,30 195,15"/>
+        <polygon class="r0c6-bottom" points="210,30 180,30 195,15"/>
+        <polygon class="r0c6-left" points="180,30 180,0 195,15"/>
+        <polygon class="r0c7-top" points="210,0 240,0 225,15"/>
+        <polygon class="r0c7-right" points="240,0 240,30 225,15"/>
+        <polygon class="r0c7-bottom" points="240,30 210,30 225,15"/>
+        <polygon class="r0c7-left" points="210,30 210,0 225,15"/>
+
+
+
+
+        <polygon class="r4c3-top" points="90,120 120,120 105,135"/>
+        <polygon class="r4c3-right" points="120,120 120,150 105,135"/>
+        <polygon class="r4c3-bottom" points="120,150 90,150 105,135"/>
+        <polygon class="r4c3-left" points="90,150 90,120 105,135"/>
+
+
+
+    </g>
+</svg>

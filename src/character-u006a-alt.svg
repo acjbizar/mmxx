@@ -1,0 +1,28 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="240" height="240" viewBox="0 0 240 240" data-codepoint="U+006A" data-char="j" data-variant="alt">
+    <title>Glyph U+006A (j) alt</title>
+    <desc>Generated glyph for U+006A | LATIN SMALL LETTER J | grid 8x8 | 256 bits | inverse occupancy (0=active,1=inactive)</desc>
+
+    <!-- Background -->
+    <rect x="0" y="0" width="240" height="240" fill="#fff"/>
+
+    <!-- Grid cells, each cell has 4 editable triangles (class-based selectors) -->
+    <g fill="#000" shape-rendering="crispEdges">
+
+
+
+        <polygon class="r3c0-top" points="0,90 30,90 15,105"/>
+        <polygon class="r3c0-right" points="30,90 30,120 15,105"/>
+        <polygon class="r3c0-bottom" points="30,120 0,120 15,105"/>
+        <polygon class="r3c0-left" points="0,120 0,90 15,105"/>
+
+        <polygon class="r4c0-top" points="0,120 30,120 15,135"/>
+        <polygon class="r4c0-right" points="30,120 30,150 15,135"/>
+        <polygon class="r4c0-bottom" points="30,150 0,150 15,135"/>
+        <polygon class="r4c0-left" points="0,150 0,120 15,135"/>
+
+
+
+        <polygon class="r7c7-right" points="240,210 240,240 225,225"/>
+        <polygon class="r7c7-bottom" points="240,240 210,240 225,225"/>
+    </g>
+</svg>

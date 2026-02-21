@@ -1,0 +1,30 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="240" height="240" viewBox="0 0 240 240" data-codepoint="U+0070" data-char="p" data-variant="alt">
+    <title>Glyph U+0070 (p) alt</title>
+    <desc>Generated glyph for U+0070 | LATIN SMALL LETTER P | grid 8x8 | 256 bits | inverse occupancy (0=active,1=inactive)</desc>
+
+    <!-- Background -->
+    <rect x="0" y="0" width="240" height="240" fill="#fff"/>
+
+    <!-- Grid cells, each cell has 4 editable triangles (class-based selectors) -->
+    <g fill="#000" shape-rendering="crispEdges">
+
+
+        <polygon class="r2c4-top" points="120,60 150,60 135,75"/>
+        <polygon class="r2c4-right" points="150,60 150,90 135,75"/>
+        <polygon class="r2c4-bottom" points="150,90 120,90 135,75"/>
+        <polygon class="r2c4-left" points="120,90 120,60 135,75"/>
+
+
+
+
+        <polygon class="r6c7-top" points="210,180 240,180 225,195"/>
+        <polygon class="r6c7-right" points="240,180 240,210 225,195"/>
+        <polygon class="r6c7-bottom" points="240,210 210,210 225,195"/>
+        <polygon class="r6c7-left" points="210,210 210,180 225,195"/>
+
+        <polygon class="r7c7-top" points="210,210 240,210 225,225"/>
+        <polygon class="r7c7-right" points="240,210 240,240 225,225"/>
+        <polygon class="r7c7-bottom" points="240,240 210,240 225,225"/>
+        <polygon class="r7c7-left" points="210,240 210,210 225,225"/>
+    </g>
+</svg>

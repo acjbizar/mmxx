@@ -1,0 +1,26 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="240" height="240" viewBox="0 0 240 240" data-codepoint="U+0073" data-char="s" data-variant="alt">
+    <title>Glyph U+0073 (s) alt</title>
+    <desc>Generated glyph for U+0073 | LATIN SMALL LETTER S | grid 8x8 | 256 bits | inverse occupancy (0=active,1=inactive)</desc>
+
+    <!-- Background -->
+    <rect x="0" y="0" width="240" height="240" fill="#fff"/>
+
+    <!-- Grid cells, each cell has 4 editable triangles (class-based selectors) -->
+    <g fill="#000" shape-rendering="crispEdges">
+
+
+        <polygon class="r2c7-top" points="210,60 240,60 225,75"/>
+        <polygon class="r2c7-right" points="240,60 240,90 225,75"/>
+        <polygon class="r2c7-bottom" points="240,90 210,90 225,75"/>
+        <polygon class="r2c7-left" points="210,90 210,60 225,75"/>
+
+
+
+        <polygon class="r5c0-top" points="0,150 30,150 15,165"/>
+        <polygon class="r5c0-right" points="30,150 30,180 15,165"/>
+        <polygon class="r5c0-bottom" points="30,180 0,180 15,165"/>
+        <polygon class="r5c0-left" points="0,180 0,150 15,165"/>
+
+
+    </g>
+</svg>

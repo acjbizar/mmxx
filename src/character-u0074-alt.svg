@@ -1,0 +1,34 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="240" height="240" viewBox="0 0 240 240" data-codepoint="U+0074" data-char="t" data-variant="alt">
+    <title>Glyph U+0074 (t) alt</title>
+    <desc>Generated glyph for U+0074 | LATIN SMALL LETTER T | grid 8x8 | 256 bits | inverse occupancy (0=active,1=inactive)</desc>
+
+    <!-- Background -->
+    <rect x="0" y="0" width="240" height="240" fill="#fff"/>
+
+    <!-- Grid cells, each cell has 4 editable triangles (class-based selectors) -->
+    <g fill="#000" shape-rendering="crispEdges">
+
+
+
+
+
+
+        <polygon class="r6c0-top" points="0,180 30,180 15,195"/>
+        <polygon class="r6c0-right" points="30,180 30,210 15,195"/>
+        <polygon class="r6c0-bottom" points="30,210 0,210 15,195"/>
+        <polygon class="r6c0-left" points="0,210 0,180 15,195"/>
+        <polygon class="r6c7-top" points="210,180 240,180 225,195"/>
+        <polygon class="r6c7-right" points="240,180 240,210 225,195"/>
+        <polygon class="r6c7-bottom" points="240,210 210,210 225,195"/>
+        <polygon class="r6c7-left" points="210,210 210,180 225,195"/>
+
+        <polygon class="r7c0-top" points="0,210 30,210 15,225"/>
+        <polygon class="r7c0-right" points="30,210 30,240 15,225"/>
+        <polygon class="r7c0-bottom" points="30,240 0,240 15,225"/>
+        <polygon class="r7c0-left" points="0,240 0,210 15,225"/>
+        <polygon class="r7c7-top" points="210,210 240,210 225,225"/>
+        <polygon class="r7c7-right" points="240,210 240,240 225,225"/>
+        <polygon class="r7c7-bottom" points="240,240 210,240 225,225"/>
+        <polygon class="r7c7-left" points="210,240 210,210 225,225"/>
+    </g>
+</svg>
