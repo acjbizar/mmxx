@@ -9,12 +9,14 @@ optionally export that data back to structured SVG files.
 Expected source filenames:
   src/character-u{codepoint}.svg   (hex codepoint, e.g. character-u0032.svg)
 
-Expected polygon ids inside the SVG:
-  r{row}c{col}-{top|right|bottom|left}
+Expected polygon selectors inside the SVG (either style is supported):
+  - id="r{row}c{col}-{top|right|bottom|left}"      (legacy)
+  - class="r{row}c{col}-{top|right|bottom|left}"   (new)
+    (class may contain multiple tokens; the matching token is used)
 
-Each polygon id that exists in the SVG is treated as an enabled triangle (1).
-Missing triangles are treated as disabled (0). This also naturally supports
-hand-edited SVGs where disabled polygons were commented out.
+Each matching polygon selector that exists in the SVG is treated as an enabled
+triangle (1). Missing triangles are treated as disabled (0). This naturally
+supports hand-edited SVGs where disabled polygons were commented out.
 
 Outputs (default):
   - data/glyphs.json        (portable data dump, includes bitstring)
@@ -112,6 +114,28 @@ def parse_codepoint_from_filename(path: Path) -> Tuple[int, str]:
     return int(hex_token, 16), hex_token.lower()
 
 
+def _extract_polygon_selector(elem: ET.Element) -> str:
+    """
+    Accept both:
+      - legacy: <polygon id="r0c0-top" .../>
+      - new:    <polygon class="r0c0-top" .../>
+    If class contains multiple tokens, return the first matching one.
+    """
+    # Legacy format
+    selector = (elem.attrib.get("id") or "").strip()
+    if selector:
+        return selector
+
+    # New format (class-based). class may contain multiple classes.
+    class_attr = (elem.attrib.get("class") or "").strip()
+    if class_attr:
+        for token in class_attr.split():
+            if POLYGON_ID_RE.match(token):
+                return token
+
+    return ""
+
+
 def parse_glyph_svg(svg_path: Path, rows: int, cols: int) -> GlyphRecord:
     codepoint, source_hex = parse_codepoint_from_filename(svg_path)
     grid = make_empty_grid(rows, cols)
@@ -130,26 +154,26 @@ def parse_glyph_svg(svg_path: Path, rows: int, cols: int) -> GlyphRecord:
         if tag != "polygon":
             continue
 
-        poly_id = elem.attrib.get("id", "")
-        if not poly_id:
+        selector = _extract_polygon_selector(elem)
+        if not selector:
             continue
 
-        m = POLYGON_ID_RE.match(poly_id)
+        m = POLYGON_ID_RE.match(selector)
         if not m:
-            # Ignore unrelated polygon ids
+            # Ignore unrelated polygon ids/classes
             continue
 
-        if poly_id in seen:
-            warnings.append(f"duplicate polygon id '{poly_id}'")
+        if selector in seen:
+            warnings.append(f"duplicate polygon selector '{selector}'")
             continue
-        seen.add(poly_id)
+        seen.add(selector)
 
         r = int(m.group(1))
         c = int(m.group(2))
         tri_name = m.group(3)
 
         if not (0 <= r < rows and 0 <= c < cols):
-            warnings.append(f"polygon id '{poly_id}' out of grid bounds ({rows}x{cols})")
+            warnings.append(f"polygon selector '{selector}' out of grid bounds ({rows}x{cols})")
             continue
 
         # If a polygon is present but explicitly hidden/none, treat it as disabled.
