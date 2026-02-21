@@ -1,13 +1,13 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 """
-tools/generate-glyphs.py
+tools/generate-data.py
 
 Reverse-engineer polygon-grid glyph SVGs into binary glyph data (0/1) and
 optionally export that data back to structured SVG files.
 
 Expected source filenames:
-  src/character-u{codepoint}.svg   (hex codepoint, e.g. character-u32.svg)
+  src/character-u{codepoint}.svg   (hex codepoint, e.g. character-u0032.svg)
 
 Expected polygon ids inside the SVG:
   r{row}c{col}-{top|right|bottom|left}
@@ -16,23 +16,26 @@ Each polygon id that exists in the SVG is treated as an enabled triangle (1).
 Missing triangles are treated as disabled (0). This also naturally supports
 hand-edited SVGs where disabled polygons were commented out.
 
-Outputs (optional):
-  - data/glyphs.json        (portable binary data dump)
-  - data/glyphs_data.py     (Python module with GLYPHS dict)
+Outputs (default):
+  - data/glyphs.json        (portable data dump, includes bitstring)
+  - data/glyphs_data.py     (Python module with GLYPHS dict, includes bitstring)
+  - data/glyphs_bits.py     (compact Python module with codepoint -> bitstring)
+
+Optional:
   - regenerated SVGs        (structured output from the binary data)
 
 Examples:
-  # Import existing SVGs and write JSON + Python data files (default)
-  py tools/generate-glyphs.py
+  # Import existing SVGs and write JSON + Python files
+  py tools/generate-data.py
 
   # Also regenerate SVGs into src/generated-glyphs
-  py tools/generate-glyphs.py --export-svgs --svg-out-dir src/generated-glyphs
+  py tools/generate-data.py --export-svgs --svg-out-dir src/generated-glyphs
 
   # Round-trip back into src (overwrite originals carefully)
-  py tools/generate-glyphs.py --export-svgs --svg-out-dir src --overwrite
+  py tools/generate-data.py --export-svgs --svg-out-dir src --overwrite
 
   # Only process selected glyphs
-  py tools/generate-glyphs.py --only 2 A U+03A9
+  py tools/generate-data.py --only 2 A U+03A9
 """
 from __future__ import annotations
 
@@ -59,8 +62,10 @@ DEFAULT_CELL_SIZE = 30
 ROOT = Path(__file__).resolve().parents[1]
 DEFAULT_SRC_DIR = ROOT / "src"
 DEFAULT_DATA_DIR = ROOT / "data"
+
 DEFAULT_JSON_OUT = DEFAULT_DATA_DIR / "glyphs.json"
 DEFAULT_PY_OUT = DEFAULT_DATA_DIR / "glyphs_data.py"
+DEFAULT_BITS_OUT = DEFAULT_DATA_DIR / "glyphs_bits.py"
 
 FILENAME_RE = re.compile(r"^character-u([0-9A-Fa-f]+)\.svg$")
 POLYGON_ID_RE = re.compile(r"^r(\d+)c(\d+)-(top|right|bottom|left)$")
@@ -88,6 +93,7 @@ class GlyphRecord:
         return out
 
     def bitstring(self) -> str:
+        # For 8x8x4, this is exactly 256 chars long.
         return "".join(str(b) for b in self.flattened_bits())
 
     def enabled_count(self) -> int:
@@ -146,7 +152,7 @@ def parse_glyph_svg(svg_path: Path, rows: int, cols: int) -> GlyphRecord:
             warnings.append(f"polygon id '{poly_id}' out of grid bounds ({rows}x{cols})")
             continue
 
-        # If an author explicitly hid a polygon but left it in the DOM, treat as disabled.
+        # If a polygon is present but explicitly hidden/none, treat it as disabled.
         display = (elem.attrib.get("display") or "").strip().lower()
         visibility = (elem.attrib.get("visibility") or "").strip().lower()
         opacity = (elem.attrib.get("opacity") or "").strip()
@@ -160,8 +166,7 @@ def parse_glyph_svg(svg_path: Path, rows: int, cols: int) -> GlyphRecord:
         grid[r][c][TRI_INDEX[tri_name]] = 1
 
     if warnings:
-        joined = "; ".join(warnings)
-        print(f"[warn] {svg_path.name}: {joined}", file=sys.stderr)
+        print(f"[warn] {svg_path.name}: " + "; ".join(warnings), file=sys.stderr)
 
     return GlyphRecord(codepoint=codepoint, source_hex=source_hex, source_file=svg_path, grid=grid)
 
@@ -183,23 +188,14 @@ def _parse_only_token(token: str) -> int:
     if not token:
         raise ValueError("Empty token in --only")
 
-    # U+XXXX
     if token.upper().startswith("U+"):
         return int(token[2:], 16)
-
-    # 0xNN
     if token.lower().startswith("0x"):
         return int(token[2:], 16)
-
-    # decimal integer
     if token.isdigit():
         return int(token, 10)
-
-    # single literal character
     if len(token) == 1:
         return ord(token)
-
-    # hex fallback (e.g. "03A9")
     if re.fullmatch(r"[0-9A-Fa-f]+", token):
         return int(token, 16)
 
@@ -230,6 +226,8 @@ def build_json_payload(
     cols: int,
     cell_size: int,
 ) -> dict:
+    bit_count = rows * cols * len(TRI_ORDER)
+
     payload = {
         "meta": {
             "grid_rows": rows,
@@ -237,6 +235,7 @@ def build_json_payload(
             "cell_size": cell_size,
             "triangle_order": list(TRI_ORDER),
             "bit_order": "row-major, cell-major, triangle-order(top,right,bottom,left)",
+            "bit_count": bit_count,
             "filename_pattern": "character-u{hex}.svg",
         },
         "glyphs": {},
@@ -250,6 +249,7 @@ def build_json_payload(
             "source_file": rec.source_file.name,
             "source_hex": rec.source_hex,
             "enabled_count": rec.enabled_count(),
+            "bitstring": rec.bitstring(),
             "bits": rec.flattened_bits(),
             "grid": rec.grid,
         }
@@ -262,13 +262,15 @@ def write_json(payload: dict, path: Path) -> None:
     path.write_text(json.dumps(payload, indent=2, ensure_ascii=False) + "\n", encoding="utf-8")
 
 
-def _py_repr_grid(grid: List[List[List[int]]], row_indent: str = " " * 12) -> str:
+def _py_repr_grid(grid: List[List[List[int]]], base_indent: str = " " * 8) -> str:
+    """Pretty repr for nested [row][col][tri] list."""
     lines: List[str] = ["["]
-    for r, row in enumerate(grid):
-        row_bits = ", ".join("[" + ", ".join(str(v) for v in cell) + "]" for cell in row)
-        suffix = "," if r < len(grid) - 1 else ""
-        lines.append(f"{row_indent}[{row_bits}]{suffix}")
-    lines.append(" " * 8 + "]")
+    row_indent = base_indent + "    "
+    for i, row in enumerate(grid):
+        row_cells = ", ".join("[" + ", ".join(str(v) for v in cell) + "]" for cell in row)
+        comma = "," if i < len(grid) - 1 else ""
+        lines.append(f"{row_indent}[{row_cells}]{comma}")
+    lines.append(base_indent + "]")
     return "\n".join(lines)
 
 
@@ -280,26 +282,68 @@ def write_python_module(
     path: Path,
 ) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
+    bit_count = rows * cols * len(TRI_ORDER)
 
     lines: List[str] = []
-    lines.append("# Auto-generated by tools/generate-glyphs.py")
+    lines.append("# Auto-generated by tools/generate-data.py")
     lines.append("# Do not edit by hand unless you know what you're doing.")
     lines.append("")
     lines.append(f"GRID_ROWS = {rows}")
     lines.append(f"GRID_COLS = {cols}")
     lines.append(f"CELL_SIZE = {cell_size}")
     lines.append(f"TRIANGLE_ORDER = {TRI_ORDER!r}")
+    lines.append(f"BIT_COUNT = {bit_count}")
     lines.append("")
     lines.append("GLYPHS = {")
     for cp, rec in glyphs.items():
-        lines.append(f"    0x{cp:04X}: {{")
         ch = _char_repr(cp)
+        lines.append(f"    0x{cp:04X}: {{")
         lines.append(f"        'char': {ch!r},")
         lines.append(f"        'source_file': {rec.source_file.name!r},")
         lines.append(f"        'source_hex': {rec.source_hex!r},")
         lines.append(f"        'enabled_count': {rec.enabled_count()},")
-        lines.append("        'grid': " + _py_repr_grid(rec.grid))
+        lines.append(f"        'bitstring': {rec.bitstring()!r},")
+        lines.append("        'grid': " + _py_repr_grid(rec.grid, base_indent=" " * 8))
         lines.append("    },")
+    lines.append("}")
+    lines.append("")
+
+    path.write_text("\n".join(lines), encoding="utf-8")
+
+
+def write_bits_module(
+    glyphs: Dict[int, GlyphRecord],
+    rows: int,
+    cols: int,
+    path: Path,
+) -> None:
+    """
+    Write a compact codepoint -> bitstring module.
+    For the default 8x8x4 layout, each string is 256 chars long.
+    """
+    path.parent.mkdir(parents=True, exist_ok=True)
+    bit_count = rows * cols * len(TRI_ORDER)
+
+    lines: List[str] = []
+    lines.append("# Auto-generated by tools/generate-data.py")
+    lines.append("# Compact glyph data: codepoint -> bitstring")
+    lines.append("")
+    lines.append(f"GRID_ROWS = {rows}")
+    lines.append(f"GRID_COLS = {cols}")
+    lines.append(f"TRIANGLE_ORDER = {TRI_ORDER!r}")
+    lines.append(f"BIT_COUNT = {bit_count}")
+    lines.append("")
+    lines.append("GLYPH_BITS = {")
+    for cp, rec in glyphs.items():
+        ch = _char_repr(cp)
+        comment = f"  # {ch}" if ch else ""
+        lines.append(f"    0x{cp:04X}: {rec.bitstring()!r},{comment}")
+    lines.append("}")
+    lines.append("")
+    lines.append("GLYPH_BITS_BY_KEY = {")
+    for cp, rec in glyphs.items():
+        key = f"u{cp:04x}"
+        lines.append(f"    {key!r}: GLYPH_BITS[0x{cp:04X}],")
     lines.append("}")
     lines.append("")
 
@@ -392,7 +436,8 @@ def export_svgs(
 ) -> int:
     out_dir.mkdir(parents=True, exist_ok=True)
     written = 0
-    for _, rec in glyphs.items():
+
+    for rec in glyphs.values():
         filename = _glyph_filename_for_export(
             rec,
             hex_width=hex_width,
@@ -402,9 +447,18 @@ def export_svgs(
         if out_path.exists() and not overwrite:
             print(f"[skip] {out_path} exists (use --overwrite to replace)")
             continue
-        svg = render_glyph_svg(rec, rows=rows, cols=cols, cell_size=cell_size, fg_fill=fg_fill, bg_fill=bg_fill)
+
+        svg = render_glyph_svg(
+            rec,
+            rows=rows,
+            cols=cols,
+            cell_size=cell_size,
+            fg_fill=fg_fill,
+            bg_fill=bg_fill,
+        )
         out_path.write_text(svg, encoding="utf-8")
         written += 1
+
     return written
 
 
@@ -412,6 +466,7 @@ def parse_args() -> argparse.Namespace:
     p = argparse.ArgumentParser(
         description="Reverse-engineer polygon-grid glyph SVGs into binary data and export SVGs."
     )
+
     p.add_argument(
         "--src-dir",
         type=Path,
@@ -431,13 +486,17 @@ def parse_args() -> argparse.Namespace:
 
     p.add_argument("--json-out", type=Path, default=DEFAULT_JSON_OUT, help=f"Write JSON glyph dump (default: {DEFAULT_JSON_OUT})")
     p.add_argument("--no-json", action="store_true", help="Do not write JSON output")
+
     p.add_argument("--py-out", type=Path, default=DEFAULT_PY_OUT, help=f"Write Python glyph module (default: {DEFAULT_PY_OUT})")
     p.add_argument("--no-py", action="store_true", help="Do not write Python module output")
+
+    p.add_argument("--bits-out", type=Path, default=DEFAULT_BITS_OUT, help=f"Write compact bitstring Python module (default: {DEFAULT_BITS_OUT})")
+    p.add_argument("--no-bits", action="store_true", help="Do not write compact bitstring output")
 
     p.add_argument("--export-svgs", action="store_true", help="Export SVGs from the parsed binary glyph data")
     p.add_argument("--svg-out-dir", type=Path, default=DEFAULT_SRC_DIR / "generated-glyphs", help="Output directory for exported SVGs")
     p.add_argument("--overwrite", action="store_true", help="Overwrite existing exported SVGs")
-    p.add_argument("--hex-width", type=int, default=4, help="Hex padding width for new export filenames (default: 4)")
+    p.add_argument("--hex-width", type=int, default=4, help="Hex padding width for export filenames if not preserving imported names (default: 4)")
     p.add_argument(
         "--no-preserve-imported-names",
         action="store_true",
@@ -445,6 +504,7 @@ def parse_args() -> argparse.Namespace:
     )
     p.add_argument("--fg-fill", default="#000", help="Foreground fill color for exported polygons (default: #000)")
     p.add_argument("--bg-fill", default="#fff", help="Background fill color for exported SVGs (default: #fff)")
+
     return p.parse_args()
 
 
@@ -471,10 +531,11 @@ def main() -> int:
         print(f"No glyph SVGs found in {args.src_dir} matching character-u*.svg", file=sys.stderr)
         return 1
 
+    bit_count = args.rows * args.cols * len(TRI_ORDER)
     total_enabled = sum(rec.enabled_count() for rec in glyphs.values())
-    max_bits = args.rows * args.cols * len(TRI_ORDER)
+
     print(f"Imported {len(glyphs)} glyph(s) from {args.src_dir}")
-    print(f"Grid: {args.rows}x{args.cols} cells, {max_bits} bits per glyph")
+    print(f"Grid: {args.rows}x{args.cols} cells -> {bit_count} bits per glyph")
     print(f"Total enabled triangles across all glyphs: {total_enabled}")
 
     if not args.no_json:
@@ -485,6 +546,10 @@ def main() -> int:
     if not args.no_py:
         write_python_module(glyphs, rows=args.rows, cols=args.cols, cell_size=args.cell_size, path=args.py_out)
         print(f"Wrote Python module: {args.py_out}")
+
+    if not args.no_bits:
+        write_bits_module(glyphs, rows=args.rows, cols=args.cols, path=args.bits_out)
+        print(f"Wrote compact bitstrings: {args.bits_out}")
 
     if args.export_svgs:
         written = export_svgs(
