@@ -1,7 +1,18 @@
-<svg xmlns="http://www.w3.org/2000/svg" width="240" height="240" viewBox="0 0 240 240">
-    <!-- Glyph:   -->
+<svg xmlns="http://www.w3.org/2000/svg" width="240" height="240" viewBox="0 0 240 240" data-codepoint="U+0020" data-char=" ">
+    <title>Glyph U+0020 ( )</title>
+    <desc>Generated glyph for U+0020 | SPACE | grid 8x8 | 256 bits</desc>
+
+    <!-- Background -->
     <rect x="0" y="0" width="240" height="240" fill="#fff"/>
+
+    <!-- Grid cells, each cell has 4 editable triangles (class-based selectors) -->
     <g fill="#000" shape-rendering="crispEdges">
+
+
+
+
+
+
 
     </g>
 </svg>
