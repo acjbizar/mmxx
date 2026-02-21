@@ -1,0 +1,696 @@
+<!doctype html>
+<html lang="en">
+<head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width,initial-scale=1" />
+    <title>Glyph Designer — Triangle Grid</title>
+    <style>
+        :root{
+            --bg: #f6f7f9;
+            --panel: #ffffff;
+            --text: #111;
+            --muted: #666;
+            --line: #b8bcc4;
+            --line-strong: #8f96a3;
+            --border: #d8dce3;
+            --accent: #2f6fed;
+            --danger: #d64545;
+            --shadow: 0 8px 30px rgba(0,0,0,.08);
+        }
+        @media (prefers-color-scheme: dark) {
+            :root{
+                --bg: #0f1217;
+                --panel: #171b22;
+                --text: #eceff4;
+                --muted: #aab3c2;
+                --line: #4f5868;
+                --line-strong: #6b7689;
+                --border: #2b3340;
+                --accent: #75a7ff;
+                --danger: #ff7676;
+                --shadow: 0 10px 32px rgba(0,0,0,.35);
+            }
+        }
+
+        * { box-sizing: border-box; }
+        body {
+            margin: 0;
+            font: 14px/1.4 system-ui, -apple-system, Segoe UI, Roboto, Inter, sans-serif;
+            color: var(--text);
+            background: var(--bg);
+        }
+
+        .app {
+            display: grid;
+            grid-template-columns: minmax(320px, 520px) 1fr;
+            gap: 16px;
+            padding: 16px;
+            min-height: 100vh;
+        }
+
+        @media (max-width: 1100px){
+            .app { grid-template-columns: 1fr; }
+        }
+
+        .panel {
+            background: var(--panel);
+            border: 1px solid var(--border);
+            border-radius: 14px;
+            box-shadow: var(--shadow);
+            overflow: hidden;
+        }
+
+        .panel-header {
+            padding: 12px 14px;
+            border-bottom: 1px solid var(--border);
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            gap: 10px;
+            flex-wrap: wrap;
+        }
+
+        .panel-header h2 {
+            margin: 0;
+            font-size: 14px;
+            font-weight: 700;
+            letter-spacing: .2px;
+        }
+
+        .panel-body {
+            padding: 14px;
+        }
+
+        .controls {
+            display: grid;
+            gap: 10px;
+            margin-bottom: 12px;
+        }
+
+        .row {
+            display: flex;
+            gap: 8px;
+            align-items: center;
+            flex-wrap: wrap;
+        }
+
+        label {
+            font-weight: 600;
+            font-size: 12px;
+            color: var(--muted);
+            min-width: 88px;
+        }
+
+        input[type="text"] {
+            min-width: 90px;
+            max-width: 180px;
+            padding: 8px 10px;
+            border: 1px solid var(--border);
+            border-radius: 8px;
+            background: var(--panel);
+            color: var(--text);
+            font: inherit;
+        }
+
+        .mono {
+            font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+            font-size: 12px;
+        }
+
+        .meta {
+            display: grid;
+            gap: 4px;
+            color: var(--muted);
+            font-size: 12px;
+            margin-top: 6px;
+        }
+
+        .buttons {
+            display: flex;
+            flex-wrap: wrap;
+            gap: 8px;
+            margin-top: 8px;
+        }
+
+        button {
+            border: 1px solid var(--border);
+            background: var(--panel);
+            color: var(--text);
+            border-radius: 8px;
+            padding: 7px 10px;
+            cursor: pointer;
+            font: inherit;
+        }
+        button:hover { border-color: var(--line-strong); }
+        button.primary {
+            border-color: var(--accent);
+            color: var(--accent);
+        }
+        button.danger {
+            border-color: var(--danger);
+            color: var(--danger);
+        }
+
+        .editor-wrap {
+            border: 1px solid var(--border);
+            border-radius: 12px;
+            padding: 10px;
+            background: color-mix(in srgb, var(--panel) 85%, var(--bg) 15%);
+            display: grid;
+            place-items: center;
+        }
+
+        svg#editorSvg {
+            width: min(100%, 520px);
+            height: auto;
+            display: block;
+            touch-action: none;
+            background: #fff; /* editor canvas should always be white for clarity */
+            border-radius: 8px;
+            border: 1px solid var(--border);
+        }
+
+        .tri {
+            fill: #fff;
+            stroke: var(--line);
+            stroke-width: 1;
+            vector-effect: non-scaling-stroke;
+            cursor: pointer;
+        }
+        .tri.active {
+            fill: #000;
+            stroke: #2a2a2a;
+        }
+        .tri:hover {
+            stroke: var(--accent);
+            stroke-width: 1.5;
+        }
+
+        .grid-lines line {
+            stroke: var(--line-strong);
+            stroke-width: 1;
+            vector-effect: non-scaling-stroke;
+            pointer-events: none;
+            opacity: .95;
+        }
+
+        .cell-centers circle {
+            fill: var(--line);
+            opacity: .35;
+            pointer-events: none;
+        }
+
+        .outputs {
+            display: grid;
+            gap: 16px;
+        }
+
+        .textarea-wrap {
+            display: grid;
+            gap: 8px;
+        }
+
+        textarea {
+            width: 100%;
+            min-height: 240px;
+            resize: vertical;
+            border: 1px solid var(--border);
+            border-radius: 10px;
+            padding: 10px;
+            background: color-mix(in srgb, var(--panel) 92%, var(--bg) 8%);
+            color: var(--text);
+            font: 12px/1.4 ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+            tab-size: 2;
+        }
+
+        .small {
+            color: var(--muted);
+            font-size: 12px;
+        }
+
+        .status {
+            display: flex;
+            gap: 10px;
+            flex-wrap: wrap;
+            color: var(--muted);
+            font-size: 12px;
+            margin-top: 8px;
+        }
+
+        .pill {
+            border: 1px solid var(--border);
+            border-radius: 999px;
+            padding: 3px 8px;
+            background: color-mix(in srgb, var(--panel) 85%, var(--bg) 15%);
+        }
+    </style>
+</head>
+<body>
+<div class="app">
+    <section class="panel">
+        <div class="panel-header">
+            <h2>Glyph Designer</h2>
+            <div class="small">8×8 cells × 4 triangles = 256 bits</div>
+        </div>
+        <div class="panel-body">
+            <div class="controls">
+                <div class="row">
+                    <label for="charInput">Character</label>
+                    <input id="charInput" type="text" maxlength="4" value="2" aria-label="Character input" />
+                    <span class="small">Use one character (first code point is used)</span>
+                </div>
+
+                <div class="meta mono" id="metaInfo">
+                    <div>Codepoint: —</div>
+                    <div>Filename: —</div>
+                    <div>Bitstring length: 256</div>
+                </div>
+
+                <div class="buttons">
+                    <button id="clearBtn" class="danger" type="button">Clear</button>
+                    <button id="fillBtn" type="button">Fill all</button>
+                    <button id="invertBtn" type="button">Invert</button>
+                    <button id="copyJsonBtn" class="primary" type="button">Copy JSON</button>
+                    <button id="copySvgBtn" class="primary" type="button">Copy SVG</button>
+                </div>
+            </div>
+
+            <div class="editor-wrap">
+                <svg id="editorSvg" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 240 240" aria-label="Interactive glyph grid"></svg>
+            </div>
+
+            <div class="status mono">
+                <span class="pill" id="enabledCountPill">Enabled: 0</span>
+                <span class="pill" id="bitPreviewPill">Bits: 0000000000000000…</span>
+            </div>
+        </div>
+    </section>
+
+    <section class="outputs">
+        <div class="panel">
+            <div class="panel-header">
+                <h2>JSON data</h2>
+            </div>
+            <div class="panel-body">
+                <div class="textarea-wrap">
+                    <textarea id="jsonOutput" spellcheck="false"></textarea>
+                    <div class="small">
+                        Includes <span class="mono">bitstring</span>, flat <span class="mono">bits</span>, and nested <span class="mono">grid</span> in the same row/cell/triangle order as your scripts.
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <div class="panel">
+            <div class="panel-header">
+                <h2>SVG markup</h2>
+            </div>
+            <div class="panel-body">
+                <div class="textarea-wrap">
+                    <textarea id="svgOutput" spellcheck="false"></textarea>
+                    <div class="small">
+                        Output uses polygon <span class="mono">class="r{row}c{col}-{side}"</span> selectors, plus <span class="mono">&lt;title&gt;</span>, <span class="mono">&lt;desc&gt;</span>, and root metadata.
+                    </div>
+                </div>
+            </div>
+        </div>
+    </section>
+</div>
+
+<script>
+    (() => {
+        const NS = "http://www.w3.org/2000/svg";
+
+        const ROWS = 8;
+        const COLS = 8;
+        const CELL = 30;
+        const TRI_ORDER = ["top", "right", "bottom", "left"];
+
+        /** grid[row][col][triIndex] -> 0/1 */
+        const grid = Array.from({ length: ROWS }, () =>
+            Array.from({ length: COLS }, () => [0, 0, 0, 0])
+        );
+
+        const editorSvg = document.getElementById("editorSvg");
+        const charInput = document.getElementById("charInput");
+        const metaInfo = document.getElementById("metaInfo");
+        const jsonOutput = document.getElementById("jsonOutput");
+        const svgOutput = document.getElementById("svgOutput");
+        const enabledCountPill = document.getElementById("enabledCountPill");
+        const bitPreviewPill = document.getElementById("bitPreviewPill");
+
+        const clearBtn = document.getElementById("clearBtn");
+        const fillBtn = document.getElementById("fillBtn");
+        const invertBtn = document.getElementById("invertBtn");
+        const copyJsonBtn = document.getElementById("copyJsonBtn");
+        const copySvgBtn = document.getElementById("copySvgBtn");
+
+        const polygonIndex = new Map(); // key "r,c,t" -> <polygon>
+
+        function escapeXml(s) {
+            return String(s)
+                .replaceAll("&", "&amp;")
+                .replaceAll("<", "&lt;")
+                .replaceAll(">", "&gt;")
+                .replaceAll('"', "&quot;")
+                .replaceAll("'", "&apos;");
+        }
+
+        function getCurrentCharInfo() {
+            const raw = charInput.value || "";
+            const cps = Array.from(raw);
+            const ch = cps.length ? cps[0] : "";
+            const hasExtra = cps.length > 1;
+            if (!ch) {
+                return {
+                    ch: "",
+                    codepoint: null,
+                    hex: "",
+                    filename: "character-u0000.svg",
+                    warning: hasExtra ? "Using first code point only" : ""
+                };
+            }
+            const cp = ch.codePointAt(0);
+            const hex = cp.toString(16).padStart(4, "0");
+            return {
+                ch,
+                codepoint: cp,
+                hex,
+                filename: `character-u${hex}.svg`,
+                warning: hasExtra ? "Using first code point only" : ""
+            };
+        }
+
+        function unicodeNameFallback(cp) {
+            // Browser JS doesn't expose Unicode names reliably; keep simple.
+            return cp == null ? "" : `U+${cp.toString(16).toUpperCase().padStart(4, "0")}`;
+        }
+
+        function trianglePoints(r, c, side) {
+            const x0 = c * CELL;
+            const y0 = r * CELL;
+            const x1 = x0 + CELL;
+            const y1 = y0 + CELL;
+            const cx = x0 + CELL / 2;
+            const cy = y0 + CELL / 2;
+
+            switch (side) {
+                case "top":    return [[x0,y0],[x1,y0],[cx,cy]];
+                case "right":  return [[x1,y0],[x1,y1],[cx,cy]];
+                case "bottom": return [[x1,y1],[x0,y1],[cx,cy]];
+                case "left":   return [[x0,y1],[x0,y0],[cx,cy]];
+                default: throw new Error("Unknown side: " + side);
+            }
+        }
+
+        function pointsAttr(points) {
+            return points.map(([x,y]) => `${x},${y}`).join(" ");
+        }
+
+        function triKey(r, c, t) {
+            return `${r},${c},${t}`;
+        }
+
+        function setTriVisual(r, c, t) {
+            const el = polygonIndex.get(triKey(r,c,t));
+            if (!el) return;
+            const active = !!grid[r][c][t];
+            el.classList.toggle("active", active);
+            el.setAttribute("fill", active ? "#000" : "#fff");
+        }
+
+        function buildEditorSvg() {
+            editorSvg.innerHTML = "";
+            polygonIndex.clear();
+
+            // Background
+            const bg = document.createElementNS(NS, "rect");
+            bg.setAttribute("x", "0");
+            bg.setAttribute("y", "0");
+            bg.setAttribute("width", String(COLS * CELL));
+            bg.setAttribute("height", String(ROWS * CELL));
+            bg.setAttribute("fill", "#fff");
+            editorSvg.appendChild(bg);
+
+            // Triangle polygons
+            const trisGroup = document.createElementNS(NS, "g");
+            trisGroup.setAttribute("id", "triangles");
+            editorSvg.appendChild(trisGroup);
+
+            for (let r = 0; r < ROWS; r++) {
+                for (let c = 0; c < COLS; c++) {
+                    for (let t = 0; t < TRI_ORDER.length; t++) {
+                        const side = TRI_ORDER[t];
+                        const poly = document.createElementNS(NS, "polygon");
+                        poly.setAttribute("class", `tri r${r}c${c}-${side}`);
+                        poly.setAttribute("data-r", String(r));
+                        poly.setAttribute("data-c", String(c));
+                        poly.setAttribute("data-t", String(t));
+                        poly.setAttribute("points", pointsAttr(trianglePoints(r, c, side)));
+                        poly.addEventListener("click", onTriangleClick);
+                        trisGroup.appendChild(poly);
+                        polygonIndex.set(triKey(r,c,t), poly);
+                        setTriVisual(r,c,t);
+                    }
+                }
+            }
+
+            // Grid lines (cell boundaries)
+            const gridLines = document.createElementNS(NS, "g");
+            gridLines.setAttribute("class", "grid-lines");
+            editorSvg.appendChild(gridLines);
+
+            for (let i = 0; i <= COLS; i++) {
+                const x = i * CELL;
+                const line = document.createElementNS(NS, "line");
+                line.setAttribute("x1", String(x));
+                line.setAttribute("y1", "0");
+                line.setAttribute("x2", String(x));
+                line.setAttribute("y2", String(ROWS * CELL));
+                gridLines.appendChild(line);
+            }
+
+            for (let i = 0; i <= ROWS; i++) {
+                const y = i * CELL;
+                const line = document.createElementNS(NS, "line");
+                line.setAttribute("x1", "0");
+                line.setAttribute("y1", String(y));
+                line.setAttribute("x2", String(COLS * CELL));
+                line.setAttribute("y2", String(y));
+                gridLines.appendChild(line);
+            }
+
+            // Optional center dots (helps visually align triangle centers)
+            const centers = document.createElementNS(NS, "g");
+            centers.setAttribute("class", "cell-centers");
+            editorSvg.appendChild(centers);
+
+            for (let r = 0; r < ROWS; r++) {
+                for (let c = 0; c < COLS; c++) {
+                    const circle = document.createElementNS(NS, "circle");
+                    circle.setAttribute("cx", String(c * CELL + CELL / 2));
+                    circle.setAttribute("cy", String(r * CELL + CELL / 2));
+                    circle.setAttribute("r", "1.2");
+                    centers.appendChild(circle);
+                }
+            }
+        }
+
+        function onTriangleClick(e) {
+            const el = e.currentTarget;
+            const r = Number(el.getAttribute("data-r"));
+            const c = Number(el.getAttribute("data-c"));
+            const t = Number(el.getAttribute("data-t"));
+            grid[r][c][t] = grid[r][c][t] ? 0 : 1;
+            setTriVisual(r,c,t);
+            updateOutputs();
+        }
+
+        function flattenedBits() {
+            const out = [];
+            for (let r = 0; r < ROWS; r++) {
+                for (let c = 0; c < COLS; c++) {
+                    for (let t = 0; t < TRI_ORDER.length; t++) {
+                        out.push(grid[r][c][t] ? 1 : 0);
+                    }
+                }
+            }
+            return out;
+        }
+
+        function bitstring() {
+            return flattenedBits().join("");
+        }
+
+        function enabledCount() {
+            let n = 0;
+            for (let r = 0; r < ROWS; r++) {
+                for (let c = 0; c < COLS; c++) {
+                    for (let t = 0; t < TRI_ORDER.length; t++) {
+                        n += grid[r][c][t] ? 1 : 0;
+                    }
+                }
+            }
+            return n;
+        }
+
+        function buildJsonObject() {
+            const info = getCurrentCharInfo();
+            const bits = flattenedBits();
+            const bs = bits.join("");
+            const cp = info.codepoint;
+
+            return {
+                meta: {
+                    grid_rows: ROWS,
+                    grid_cols: COLS,
+                    cell_size: CELL,
+                    triangle_order: TRI_ORDER.slice(),
+                    bit_order: "row-major, cell-major, triangle-order(top,right,bottom,left)",
+                    bit_count: ROWS * COLS * TRI_ORDER.length
+                },
+                glyph: {
+                    codepoint: cp,
+                    char: info.ch || "",
+                    source_hex: info.hex || "",
+                    source_file: info.filename,
+                    enabled_count: enabledCount(),
+                    bitstring: bs,
+                    bits,
+                    grid: structuredClone(grid)
+                }
+            };
+        }
+
+        function buildSvgMarkup() {
+            const info = getCurrentCharInfo();
+            const cp = info.codepoint;
+            const cpHex = cp == null ? "U+0000" : `U+${cp.toString(16).toUpperCase().padStart(4, "0")}`;
+            const ch = info.ch || "";
+            const title = ch ? `Glyph ${cpHex} (${ch})` : `Glyph ${cpHex}`;
+            const desc = `Generated glyph for ${cpHex} | grid ${ROWS}x${COLS} | 256 bits`;
+
+            const lines = [];
+            lines.push(
+                `<svg xmlns="http://www.w3.org/2000/svg" width="${COLS*CELL}" height="${ROWS*CELL}" viewBox="0 0 ${COLS*CELL} ${ROWS*CELL}" data-codepoint="${escapeXml(cpHex)}" data-char="${escapeXml(ch)}">`
+            );
+            lines.push(`    <title>${escapeXml(title)}</title>`);
+            lines.push(`    <desc>${escapeXml(desc)}</desc>`);
+            lines.push("");
+            lines.push("    <!-- Background -->");
+            lines.push(`    <rect x="0" y="0" width="${COLS*CELL}" height="${ROWS*CELL}" fill="#fff"/>`);
+            lines.push("");
+            lines.push("    <!-- Grid cells, each cell has 4 editable triangles (class-based selectors) -->");
+            lines.push(`    <g fill="#000" shape-rendering="crispEdges">`);
+
+            for (let r = 0; r < ROWS; r++) {
+                for (let c = 0; c < COLS; c++) {
+                    for (let t = 0; t < TRI_ORDER.length; t++) {
+                        if (!grid[r][c][t]) continue;
+                        const side = TRI_ORDER[t];
+                        const pts = pointsAttr(trianglePoints(r, c, side));
+                        lines.push(`        <polygon class="r${r}c${c}-${side}" points="${pts}"/>`);
+                    }
+                }
+                if (r !== ROWS - 1) lines.push("");
+            }
+
+            lines.push("    </g>");
+            lines.push("</svg>");
+            return lines.join("\n");
+        }
+
+        function updateMeta() {
+            const info = getCurrentCharInfo();
+            const cpLine = info.codepoint == null
+                ? "Codepoint: —"
+                : `Codepoint: U+${info.hex.toUpperCase()} (${info.codepoint})`;
+            const fnLine = `Filename: ${info.filename}`;
+            const warnLine = info.warning ? `Note: ${info.warning}` : "";
+            metaInfo.innerHTML = [
+                `<div>Character: ${escapeXml(info.ch || "—")}</div>`,
+                `<div>${escapeXml(cpLine)}</div>`,
+                `<div>${escapeXml(fnLine)}</div>`,
+                `<div>Bitstring length: 256</div>`,
+                warnLine ? `<div style="color:var(--danger)">${escapeXml(warnLine)}</div>` : ""
+            ].join("");
+        }
+
+        function updateOutputs() {
+            updateMeta();
+
+            const jsonObj = buildJsonObject();
+            const svg = buildSvgMarkup();
+            const bs = jsonObj.glyph.bitstring;
+            const count = jsonObj.glyph.enabled_count;
+
+            jsonOutput.value = JSON.stringify(jsonObj, null, 2);
+            svgOutput.value = svg;
+
+            enabledCountPill.textContent = `Enabled: ${count}`;
+            bitPreviewPill.textContent = `Bits: ${bs.slice(0, 16)}…`;
+        }
+
+        function fillAll(value) {
+            for (let r = 0; r < ROWS; r++) {
+                for (let c = 0; c < COLS; c++) {
+                    for (let t = 0; t < TRI_ORDER.length; t++) {
+                        grid[r][c][t] = value ? 1 : 0;
+                        setTriVisual(r,c,t);
+                    }
+                }
+            }
+            updateOutputs();
+        }
+
+        function invertAll() {
+            for (let r = 0; r < ROWS; r++) {
+                for (let c = 0; c < COLS; c++) {
+                    for (let t = 0; t < TRI_ORDER.length; t++) {
+                        grid[r][c][t] = grid[r][c][t] ? 0 : 1;
+                        setTriVisual(r,c,t);
+                    }
+                }
+            }
+            updateOutputs();
+        }
+
+        async function copyText(text) {
+            try {
+                await navigator.clipboard.writeText(text);
+            } catch {
+                // Fallback
+                const ta = document.createElement("textarea");
+                ta.value = text;
+                document.body.appendChild(ta);
+                ta.select();
+                document.execCommand("copy");
+                ta.remove();
+            }
+        }
+
+        // Wire up controls
+        charInput.addEventListener("input", () => updateOutputs());
+        clearBtn.addEventListener("click", () => fillAll(false));
+        fillBtn.addEventListener("click", () => fillAll(true));
+        invertBtn.addEventListener("click", invertAll);
+
+        copyJsonBtn.addEventListener("click", async () => {
+            await copyText(jsonOutput.value);
+            copyJsonBtn.textContent = "Copied JSON";
+            setTimeout(() => (copyJsonBtn.textContent = "Copy JSON"), 900);
+        });
+
+        copySvgBtn.addEventListener("click", async () => {
+            await copyText(svgOutput.value);
+            copySvgBtn.textContent = "Copied SVG";
+            setTimeout(() => (copySvgBtn.textContent = "Copy SVG"), 900);
+        });
+
+        // Init
+        buildEditorSvg();
+        updateOutputs();
+    })();
+</script>
+</body>
+</html>
