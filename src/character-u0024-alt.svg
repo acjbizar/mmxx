@@ -1,0 +1,68 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="240" height="240" viewBox="0 0 240 240" data-codepoint="U+0024" data-char="$" data-variant="alt">
+    <title>Glyph U+0024 ($) alt</title>
+    <desc>Generated glyph for U+0024 | DOLLAR SIGN | grid 8x8 | 256 bits | inverse occupancy (0=active,1=inactive)</desc>
+
+    <!-- Background -->
+    <rect x="0" y="0" width="240" height="240" fill="#fff"/>
+
+    <!-- Grid cells, each cell has 4 editable triangles (class-based selectors) -->
+    <g fill="#000" shape-rendering="crispEdges">
+        <polygon class="r0c0-top" points="0,0 30,0 15,15"/>
+        <polygon class="r0c0-right" points="30,0 30,30 15,15"/>
+        <polygon class="r0c0-bottom" points="30,30 0,30 15,15"/>
+        <polygon class="r0c0-left" points="0,30 0,0 15,15"/>
+        <polygon class="r0c1-top" points="30,0 60,0 45,15"/>
+        <polygon class="r0c1-right" points="60,0 60,30 45,15"/>
+        <polygon class="r0c1-bottom" points="60,30 30,30 45,15"/>
+        <polygon class="r0c1-left" points="30,30 30,0 45,15"/>
+        <polygon class="r0c2-top" points="60,0 90,0 75,15"/>
+        <polygon class="r0c2-right" points="90,0 90,30 75,15"/>
+        <polygon class="r0c2-bottom" points="90,30 60,30 75,15"/>
+        <polygon class="r0c2-left" points="60,30 60,0 75,15"/>
+        <polygon class="r0c5-top" points="150,0 180,0 165,15"/>
+        <polygon class="r0c5-right" points="180,0 180,30 165,15"/>
+        <polygon class="r0c5-bottom" points="180,30 150,30 165,15"/>
+        <polygon class="r0c5-left" points="150,30 150,0 165,15"/>
+        <polygon class="r0c6-top" points="180,0 210,0 195,15"/>
+        <polygon class="r0c6-right" points="210,0 210,30 195,15"/>
+        <polygon class="r0c6-bottom" points="210,30 180,30 195,15"/>
+        <polygon class="r0c6-left" points="180,30 180,0 195,15"/>
+        <polygon class="r0c7-top" points="210,0 240,0 225,15"/>
+        <polygon class="r0c7-right" points="240,0 240,30 225,15"/>
+        <polygon class="r0c7-bottom" points="240,30 210,30 225,15"/>
+        <polygon class="r0c7-left" points="210,30 210,0 225,15"/>
+
+
+
+        <polygon class="r3c7-right" points="240,90 240,120 225,105"/>
+
+
+        <polygon class="r5c0-left" points="0,180 0,150 15,165"/>
+
+
+        <polygon class="r7c0-top" points="0,210 30,210 15,225"/>
+        <polygon class="r7c0-right" points="30,210 30,240 15,225"/>
+        <polygon class="r7c0-bottom" points="30,240 0,240 15,225"/>
+        <polygon class="r7c0-left" points="0,240 0,210 15,225"/>
+        <polygon class="r7c1-top" points="30,210 60,210 45,225"/>
+        <polygon class="r7c1-right" points="60,210 60,240 45,225"/>
+        <polygon class="r7c1-bottom" points="60,240 30,240 45,225"/>
+        <polygon class="r7c1-left" points="30,240 30,210 45,225"/>
+        <polygon class="r7c2-top" points="60,210 90,210 75,225"/>
+        <polygon class="r7c2-right" points="90,210 90,240 75,225"/>
+        <polygon class="r7c2-bottom" points="90,240 60,240 75,225"/>
+        <polygon class="r7c2-left" points="60,240 60,210 75,225"/>
+        <polygon class="r7c5-top" points="150,210 180,210 165,225"/>
+        <polygon class="r7c5-right" points="180,210 180,240 165,225"/>
+        <polygon class="r7c5-bottom" points="180,240 150,240 165,225"/>
+        <polygon class="r7c5-left" points="150,240 150,210 165,225"/>
+        <polygon class="r7c6-top" points="180,210 210,210 195,225"/>
+        <polygon class="r7c6-right" points="210,210 210,240 195,225"/>
+        <polygon class="r7c6-bottom" points="210,240 180,240 195,225"/>
+        <polygon class="r7c6-left" points="180,240 180,210 195,225"/>
+        <polygon class="r7c7-top" points="210,210 240,210 225,225"/>
+        <polygon class="r7c7-right" points="240,210 240,240 225,225"/>
+        <polygon class="r7c7-bottom" points="240,240 210,240 225,225"/>
+        <polygon class="r7c7-left" points="210,240 210,210 225,225"/>
+    </g>
+</svg>
