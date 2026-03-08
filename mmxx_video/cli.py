@@ -69,7 +69,7 @@ def build_arg_parser() -> argparse.ArgumentParser:
     g = ap.add_mutually_exclusive_group(required=True)
     g.add_argument("--char", type=str, default=None, help="Single character OR codepoint token (uXXXX / U+XXXX / XXXX).")
     g.add_argument("--chars", type=str, default=None,
-                  help="Square count of chars: 4->2x2, 9->3x3, 16->4x4. Either literal characters (spaces ignored) or whitespace-separated codepoint tokens.")
+                  help="Square count of chars: 4->2x2, 9->3x3, 16->4x4, 25->5x5. Either literal characters (spaces ignored) or whitespace-separated codepoint tokens.")
     ap.add_argument("--inverse", action="store_true", help="Use src/inverse-*.svg instead of src/character-*.svg")
     ap.add_argument("--gap", type=int, default=0, choices=[0, 1],
                     help="Logo spacing (only for --chars): 0 = no gaps (default), 1 = pad+gap = 1/8 of cell size.")
@@ -173,8 +173,8 @@ def main(argv: Optional[List[str]] = None) -> int:
 
         n = len(items)
         grid_n = int(round(math.sqrt(n)))
-        if grid_n * grid_n != n or grid_n not in (2, 3, 4):
-            raise SystemExit("--chars must contain 4, 9, or 16 items for 2x2 / 3x3 / 4x4 grids.")
+        if grid_n * grid_n != n or grid_n not in (2, 3, 4, 5):
+            raise SystemExit("--chars must contain 4, 9, or 16 items for 2x2 / 3x3 / 4x4 / 5x5 grids.")
 
         char_paths: List[Path] = []
         for token, _cp, disp in items:

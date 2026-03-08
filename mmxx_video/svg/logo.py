@@ -32,8 +32,8 @@ def build_logo_svg_from_chars_grid(
     gap_flag: int,
     bgcolors: Optional[List[str]] = None,
 ) -> etree._Element:
-    if grid_n not in (2, 3, 4):
-        raise ValueError("grid_n must be 2, 3, or 4.")
+    if grid_n not in (2, 3, 4, 5):
+        raise ValueError("grid_n must be 2, 3, 4, or 5.")
     if len(char_svgs) != grid_n * grid_n:
         raise ValueError(f"Expected {grid_n*grid_n} character SVG paths for {grid_n}x{grid_n} grid.")
 
