@@ -17,13 +17,19 @@ from .util import parse_frame_spec, timestamped_if_exists
 from .export.svgjs import export_svgjs
 
 def parse_char_or_codepoint(s: str) -> Tuple[str, int, str]:
-    raw = (s or "").strip()
-    if not raw:
+    raw0 = s or ""
+    if raw0 == "":
         raise ValueError("Empty char/codepoint")
 
-    if len(raw) == 1:
-        cp = ord(raw)
-        return (f"u{cp:04x}".lower(), cp, raw)
+    # If it's literally one character (including space), accept it as-is.
+    if len(raw0) == 1:
+        cp = ord(raw0)
+        return (f"u{cp:04x}".lower(), cp, raw0)
+
+    # Otherwise, interpret as a codepoint token (strip allowed here)
+    raw = raw0.strip()
+    if not raw:
+        raise ValueError("Empty char/codepoint")
 
     m = _CODEPOINT_RE.match(raw)
     if m:
@@ -39,14 +45,19 @@ def parse_char_or_codepoint(s: str) -> Tuple[str, int, str]:
     raise ValueError(f"Not a single character or codepoint token: {raw!r}")
 
 def parse_chars_arg(chars: str) -> List[Tuple[str, int, str]]:
-    s = (chars or "").strip()
+    s = chars or ""
     if not s:
         return []
-    toks = [t for t in re.split(r"\s+", s) if t]
+
+    # Codepoint-token mode (whitespace-separated)
+    toks = [t for t in re.split(r"\s+", s.strip()) if t]
     if len(toks) > 1 and all((_CODEPOINT_RE.match(t) or _HEX_RE.match(t)) for t in toks):
         return [parse_char_or_codepoint(t) for t in toks]
-    compact = "".join(c for c in s if not c.isspace())
-    return [parse_char_or_codepoint(c) for c in compact]
+
+    # Literal mode: keep characters exactly, including spaces.
+    # (Normalize any whitespace like \t/\n to a regular space.)
+    literal = [(" " if c.isspace() else c) for c in s]
+    return [parse_char_or_codepoint(c) for c in literal]
 
 def safe_logo_key(items: List[Tuple[str, int, str]]) -> str:
     out: List[str] = []
