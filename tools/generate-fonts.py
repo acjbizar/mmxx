@@ -5,6 +5,7 @@ import re
 import sys
 from pathlib import Path
 from typing import Dict, List, Tuple, Optional
+from xml.sax.saxutils import escape as xml_escape
 
 import xml.etree.ElementTree as ET
 
@@ -36,8 +37,7 @@ ADVANCE_WIDTH = UPM
 ASCENT = UPM
 DESCENT = 0
 
-# ✅ NEW: default letter spacing = 1 unit
-# (with a 240x240 design grid, “1 unit” typically means 1/8 of the width)
+# default letter spacing = 1 unit
 LETTER_SPACING = int(round(UPM / 8))
 
 NUM_RE = re.compile(r"[-+]?(?:\d+\.?\d*|\.\d+)(?:[eE][-+]?\d+)?")
@@ -50,14 +50,14 @@ UFILE_RE = re.compile(r"^u([0-9A-Fa-f]{4,})(?:_u([0-9A-Fa-f]{4,}))*$")
 # Helpers
 # -----------------------------
 def _write_text_lf(path: Path, text: str) -> None:
-    """Write UTF-8 text with LF newlines (works on older Python too)."""
+    """Write UTF-8 text with LF newlines."""
     text = text.replace("\r\n", "\n").replace("\r", "\n")
     path.parent.mkdir(parents=True, exist_ok=True)
     with path.open("w", encoding="utf-8", newline="\n") as f:
         f.write(text)
 
 def _cp_slug_for_char(ch: str) -> str:
-    """Return filename slug like u0061 or u1f642 (lowercase hex, padded to >=4)."""
+    """Return filename slug like u0061 or u1f642."""
     cp = ord(ch)
     hx = format(cp, "x").rjust(4, "0")
     return f"u{hx}"
@@ -69,14 +69,12 @@ def _parse_u_slug_to_codepoints(slug: str) -> Optional[List[int]]:
       u1f642
       u1f1f3_u1f1f1
     into a list of ints.
-    Returns None if invalid.
     """
     if not slug.startswith("u"):
         return None
     parts = slug.split("_u")
     if not parts:
         return None
-    # first part begins with 'u'
     parts[0] = parts[0][1:]
     cps: List[int] = []
     for hx in parts:
@@ -85,11 +83,23 @@ def _parse_u_slug_to_codepoints(slug: str) -> Optional[List[int]]:
         cp = int(hx, 16)
         if cp < 0 or cp > 0x10FFFF:
             return None
-        # skip surrogate range (invalid scalar values)
         if 0xD800 <= cp <= 0xDFFF:
             return None
         cps.append(cp)
     return cps
+
+def _svg_font_unicode_attr(ch: str) -> str:
+    """
+    Safe unicode attribute value for <glyph unicode="...">.
+    """
+    cp = ord(ch)
+    if ch in {"&", "<", ">", '"', "'"}:
+        return f"&#x{cp:X};"
+    if cp in (0x09, 0x0A, 0x0D):
+        return f"&#x{cp:X};"
+    if cp < 0x20 or cp == 0x7F:
+        return f"&#x{cp:X};"
+    return xml_escape(ch, {'"': "&quot;"})
 
 
 # -----------------------------
@@ -158,13 +168,14 @@ def discover_chars(src_dir: Path) -> List[str]:
     Discover characters from:
       - character-u{hex}.svg  (preferred)
       - character-{char}.svg  (legacy, single-char only)
-    Skips multi-codepoint filenames (e.g. u1f1f3_u1f1f1) because cmap maps single codepoints.
+
+    Skips multi-codepoint filenames because cmap maps single codepoints.
     """
     chars: set[str] = set()
     skipped_multi: List[str] = []
 
     for p in src_dir.glob("character-*.svg"):
-        stem_part = p.stem[len("character-"):]  # after 'character-'
+        stem_part = p.stem[len("character-"):]
 
         # New format
         if stem_part.startswith("u"):
@@ -193,11 +204,14 @@ def discover_chars(src_dir: Path) -> List[str]:
 
     ordered: List[str] = []
     for c in "0123456789":
-        if c in chars: ordered.append(c)
+        if c in chars:
+            ordered.append(c)
     for c in "ABCDEFGHIJKLMNOPQRSTUVWXYZ":
-        if c in chars: ordered.append(c)
+        if c in chars:
+            ordered.append(c)
     for c in "abcdefghijklmnopqrstuvwxyz":
-        if c in chars: ordered.append(c)
+        if c in chars:
+            ordered.append(c)
     for c in sorted(chars):
         if c not in ordered:
             ordered.append(c)
@@ -222,8 +236,8 @@ def load_svg_polygons_raw(svg_path: Path) -> Tuple[Tuple[float, float, float, fl
     """
     Returns:
       viewBox (minx, miny, w, h)
-      raw polys: list of polygons, each polygon = list of (x,y)
-    Reads only <polygon>. Background rects etc. are ignored.
+      raw polys
+    Reads only <polygon>.
     """
     root = ET.parse(svg_path).getroot()
 
@@ -321,7 +335,7 @@ def inverse_geom_from_base(vb: Tuple[float, float, float, float], base_geom):
 
 
 # -----------------------------
-# Geometry -> TrueType glyph (+ correct LSB)
+# Geometry helpers
 # -----------------------------
 def _signed_area(points: List[Tuple[int, int]]) -> int:
     s = 0
@@ -351,6 +365,10 @@ def _dedupe_consecutive(points: List[Tuple[int, int]]) -> List[Tuple[int, int]]:
             out.append(p)
     return out
 
+
+# -----------------------------
+# Geometry -> TrueType glyph (+ correct LSB)
+# -----------------------------
 def geom_to_ttglyph_and_lsb(
     vb: Tuple[float, float, float, float],
     geom,
@@ -422,6 +440,99 @@ def geom_to_ttglyph_and_lsb(
 
     return pen.glyph(), int(x_min_outline)
 
+def geom_to_svg_path(
+    vb: Tuple[float, float, float, float],
+    geom,
+    upm: int = UPM,
+) -> str:
+    """
+    Convert shapely geometry to an SVG path string in font coordinates.
+    """
+    minx, miny, w, h = vb
+    if w <= 0 or h <= 0 or geom is None:
+        return ""
+
+    sx = upm / w
+    sy = upm / h
+
+    polys = iter_polygons(geom)
+    polys.sort(key=lambda p: abs(p.area), reverse=True)
+
+    commands: List[str] = []
+
+    def contour_to_commands(points_src, clockwise: bool) -> None:
+        pts: List[Tuple[int, int]] = []
+        for x, y in list(points_src)[:-1]:
+            xx = (x - minx) * sx
+            yy = (h - (y - miny)) * sy
+            pts.append((int(round(xx)), int(round(yy))))
+        pts = _dedupe_consecutive(pts)
+        pts = _ensure_winding(pts, clockwise=clockwise)
+        if len(pts) < 3:
+            return
+        commands.append(f"M{pts[0][0]} {pts[0][1]}")
+        for x, y in pts[1:]:
+            commands.append(f"L{x} {y}")
+        commands.append("Z")
+
+    for poly in polys:
+        contour_to_commands(poly.exterior.coords, clockwise=True)
+        for interior in poly.interiors:
+            contour_to_commands(interior.coords, clockwise=False)
+
+    return " ".join(commands)
+
+def _notdef_box_path(upm: int = UPM) -> str:
+    m = int(upm * 0.1)
+    return f"M{m} {m} L{upm - m} {m} L{upm - m} {upm - m} L{m} {upm - m} Z"
+
+
+# -----------------------------
+# SVG font export
+# -----------------------------
+def export_svg_font(
+    fonts_dir: Path,
+    glyph_path_map: Dict[str, str],
+    cmap: Dict[int, str],
+    hmtx: Dict[str, Tuple[int, int]],
+) -> Path:
+    svg_path = fonts_dir / f"{FONT_FAMILY.lower()}.svg"
+    quote_escape = {'"': "&quot;"}
+
+    lines: List[str] = [
+        '<?xml version="1.0" encoding="UTF-8"?>',
+        '<svg xmlns="http://www.w3.org/2000/svg">',
+        '  <defs>',
+        f'    <font id="{xml_escape(FONT_FAMILY)}" horiz-adv-x="{ADVANCE_WIDTH + LETTER_SPACING}">',
+        f'      <font-face font-family="{xml_escape(FONT_FAMILY, quote_escape)}" units-per-em="{UPM}" ascent="{ASCENT}" descent="{DESCENT}" />',
+        f'      <missing-glyph horiz-adv-x="{ADVANCE_WIDTH}" d="{_notdef_box_path()}" />',
+    ]
+
+    for cp, gname in sorted(cmap.items()):
+        ch = chr(cp)
+        d = glyph_path_map.get(gname, "")
+        adv, _lsb = hmtx.get(gname, (ADVANCE_WIDTH + LETTER_SPACING, 0))
+        glyph_name = glyph_name_for_char(ch)
+
+        attrs = [
+            f'glyph-name="{glyph_name}"',
+            f'unicode="{_svg_font_unicode_attr(ch)}"',
+            f'horiz-adv-x="{adv}"',
+        ]
+        if d:
+            attrs.append(f'd="{xml_escape(d, quote_escape)}"')
+
+        lines.append("      <glyph " + " ".join(attrs) + " />")
+
+    lines += [
+        '    </font>',
+        '  </defs>',
+        '</svg>',
+    ]
+
+    _write_text_lf(svg_path, "\n".join(lines) + "\n")
+    return svg_path
+
 
 # -----------------------------
 # Font build
@@ -437,6 +548,13 @@ def build_mmxx_font(src_dir: Path, dist_dir: Path) -> None:
     # base glyph names
     char_to_gname = {ch: glyph_name_for_char(ch) for ch in chars}
 
+    # Alias uppercase ASCII letters to lowercase glyphs when uppercase SVGs are absent.
+    alias_cmap: Dict[int, str] = {}
+    for lower in "abcdefghijklmnopqrstuvwxyz":
+        upper = lower.upper()
+        if lower in char_to_gname and upper not in char_to_gname:
+            alias_cmap[ord(upper)] = char_to_gname[lower]
+
     # If inverse-*.svg exists, we expose a .salt glyph + GSUB 'salt'
     inverse_map: Dict[str, str] = {}
     for ch in chars:
@@ -449,6 +567,7 @@ def build_mmxx_font(src_dir: Path, dist_dir: Path) -> None:
 
     glyphs: Dict[str, object] = {}
     hmtx: Dict[str, Tuple[int, int]] = {}
+    svg_path_map: Dict[str, str] = {}
 
     # .notdef
     pen = TTGlyphPen(None)
@@ -459,19 +578,22 @@ def build_mmxx_font(src_dir: Path, dist_dir: Path) -> None:
     pen.lineTo((m, UPM - m))
     pen.closePath()
     glyphs[".notdef"] = pen.glyph()
-    hmtx[".notdef"] = (ADVANCE_WIDTH, m)  # unchanged
+    hmtx[".notdef"] = (ADVANCE_WIDTH, m)
 
     # space
     pen = TTGlyphPen(None)
     glyphs["space"] = pen.glyph()
-    hmtx["space"] = (ADVANCE_WIDTH, 0)    # unchanged
+    hmtx["space"] = (ADVANCE_WIDTH, 0)
+    svg_path_map["space"] = ""
 
-    # cmap (base glyphs only)
+    # cmap
     cmap: Dict[int, str] = {32: "space"}
     for ch in chars:
         cmap[ord(ch)] = char_to_gname[ch]
+    cmap.update(alias_cmap)
 
     missing: List[str] = []
+    aliased_uppercase = [chr(cp) for cp in sorted(alias_cmap)]
 
     # cache base geom for exact inverse computation
     base_geom_by_gname: Dict[str, Tuple[Tuple[float, float, float, float], object]] = {}
@@ -484,8 +606,8 @@ def build_mmxx_font(src_dir: Path, dist_dir: Path) -> None:
         if svg_path is None:
             pen = TTGlyphPen(None)
             glyphs[gname] = pen.glyph()
-            # ✅ NEW: add default letter spacing
             hmtx[gname] = (ADVANCE_WIDTH + LETTER_SPACING, 0)
+            svg_path_map[gname] = ""
             missing.append(ch)
             base_geom_by_gname[gname] = ((0.0, 0.0, 240.0, 240.0), None)
             continue
@@ -496,8 +618,8 @@ def build_mmxx_font(src_dir: Path, dist_dir: Path) -> None:
 
         g, lsb = geom_to_ttglyph_and_lsb(vb, geom, upm=UPM)
         glyphs[gname] = g
-        # ✅ NEW: add default letter spacing
         hmtx[gname] = (ADVANCE_WIDTH + LETTER_SPACING, lsb)
+        svg_path_map[gname] = geom_to_svg_path(vb, geom, upm=UPM)
 
     # build alt glyphs as exact inverse of base in the same vb
     for base_gname, alt_gname in inverse_map.items():
@@ -505,8 +627,8 @@ def build_mmxx_font(src_dir: Path, dist_dir: Path) -> None:
         inv_geom = inverse_geom_from_base(vb, base_geom)
         g, lsb = geom_to_ttglyph_and_lsb(vb, inv_geom, upm=UPM)
         glyphs[alt_gname] = g
-        # ✅ NEW: add default letter spacing
         hmtx[alt_gname] = (ADVANCE_WIDTH + LETTER_SPACING, lsb)
+        svg_path_map[alt_gname] = geom_to_svg_path(vb, inv_geom, upm=UPM)
 
     fb = FontBuilder(UPM, isTTF=True)
     fb.setupGlyphOrder(glyph_order)
@@ -561,6 +683,14 @@ def build_mmxx_font(src_dir: Path, dist_dir: Path) -> None:
     except Exception as e:
         print(f"[warn] Could not write WOFF2 (often needs 'brotli'): {e}", file=sys.stderr)
 
+    # SVG font
+    svg_font_path = export_svg_font(
+        fonts_dir=fonts_dir,
+        glyph_path_map=svg_path_map,
+        cmap=cmap,
+        hmtx=hmtx,
+    )
+
     # Copy CSS
     css_src = src_dir / "style" / "main.css"
     css_dst = fonts_dir / f"{FONT_FAMILY}.css"
@@ -573,7 +703,10 @@ def build_mmxx_font(src_dir: Path, dist_dir: Path) -> None:
     print(f"Inverse flags:{src_dir.resolve()}  (inverse-{{char}}.svg or inverse-u{{codepoint}}.svg) -> GSUB 'salt'")
     print(f"Fonts:        {fonts_dir.resolve()}")
     print(f"TTF:          {ttf_path.resolve()}")
+    print(f"SVG font:     {svg_font_path.resolve()}")
     print(f"CSS:          {css_dst.resolve()}")
+    if aliased_uppercase:
+        print(f"[info] Uppercase aliases mapped to lowercase glyphs: {', '.join(aliased_uppercase)}")
     if missing:
         print(f"[warn] Missing base SVGs for: {', '.join(missing)}", file=sys.stderr)
     if not inverse_map:

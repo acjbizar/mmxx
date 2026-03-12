@@ -1,6 +1,17 @@
-<svg xmlns="http://www.w3.org/2000/svg" width="240" height="240" viewBox="0 0 240 240">
-    <!-- Glyph: . -->
+<svg xmlns="http://www.w3.org/2000/svg" width="240" height="240" viewBox="0 0 240 240" data-codepoint="U+002E" data-char="." data-variant="normal">
+    <title>Glyph U+002E (.)</title>
+    <desc>Generated glyph for U+002E | FULL STOP | grid 8x8 | 256 bits | normal occupancy (1=active,0=inactive)</desc>
+
+    <!-- Background -->
     <rect x="0" y="0" width="240" height="240" fill="#fff"/>
+
+    <!-- Grid cells, each cell has 4 editable triangles (class-based selectors) -->
     <g fill="#000" shape-rendering="crispEdges">
-        <!--<polygon id="r6c3-top" points="90,180 120,180 105,195"/>--><!--<polygon id="r6c3-right" points="120,180 120,210 105,195"/>--><!--<polygon id="r6c3-bottom" points="120,210 90,210 105,195"/>--><!--<polygon id="r6c3-left" points="90,210 90,180 105,195"/>--><!--<polygon id="r6c4-top" points="120,180 150,180 135,195"/>--><!--<polygon id="r6c4-right" points="150,180 150,210 135,195"/>--><!--<polygon id="r6c4-bottom" points="150,210 120,210 135,195"/>--><!--<polygon id="r6c4-left" points="120,210 120,180 135,195"/>--><!--<polygon id="r7c3-top" points="90,210 120,210 105,225"/>--><!--<polygon id="r7c3-right" points="120,210 120,240 105,225"/>--><!--<polygon id="r7c3-bottom" points="120,240 90,240 105,225"/>--><!--<polygon id="r7c3-left" points="90,240 90,210 105,225"/>--><!--<polygon id="r7c4-top" points="120,210 150,210 135,225"/>--><!--<polygon id="r7c4-right" points="150,210 150,240 135,225"/>--><!--<polygon id="r7c4-bottom" points="150,240 120,240 135,225"/>--><!--<polygon id="r7c4-left" points="120,240 120,210 135,225"/>--></g>
+
+
+
+
+
+
+        <!--<polygon class="r6c3-top" points="90,180 120,180 105,195"/>--><!--<polygon class="r6c3-right" points="120,180 120,210 105,195"/>--><!--<polygon class="r6c3-bottom" points="120,210 90,210 105,195"/>--><!--<polygon class="r6c3-left" points="90,210 90,180 105,195"/>--><!--<polygon class="r6c4-top" points="120,180 150,180 135,195"/>--><!--<polygon class="r6c4-right" points="150,180 150,210 135,195"/>--><!--<polygon class="r6c4-bottom" points="150,210 120,210 135,195"/>--><!--<polygon class="r6c4-left" points="120,210 120,180 135,195"/>--><!--<polygon class="r7c3-top" points="90,210 120,210 105,225"/>--><!--<polygon class="r7c3-right" points="120,210 120,240 105,225"/>--><!--<polygon class="r7c3-bottom" points="120,240 90,240 105,225"/>--><!--<polygon class="r7c3-left" points="90,240 90,210 105,225"/>--><!--<polygon class="r7c4-top" points="120,210 150,210 135,225"/>--><!--<polygon class="r7c4-right" points="150,210 150,240 135,225"/>--><!--<polygon class="r7c4-bottom" points="150,240 120,240 135,225"/>--><!--<polygon class="r7c4-left" points="120,240 120,210 135,225"/>--></g>
 </svg>
