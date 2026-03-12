@@ -1,0 +1,1 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 240 240" data-codepoint="U+0075" data-char="u" data-variant="alt"><title>Glyph U+0075 (u) alt</title><desc>Generated glyph for U+0075 | LATIN SMALL LETTER U | grid 8x8 | 256 bits | inverse occupancy (0=active,1=inactive)</desc><path d="M 90 30 L 120 30 L 150 30 L 150 0 L 120 0 L 90 0 Z" fill-rule="evenodd"/></svg>

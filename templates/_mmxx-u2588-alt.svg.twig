@@ -1,0 +1,1 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 240 240" data-codepoint="U+2588" data-char="█" data-variant="alt"><title>Glyph U+2588 (█) alt</title><desc>Generated glyph for U+2588 | FULL BLOCK | grid 8x8 | 256 bits | inverse occupancy (0=active,1=inactive)</desc></svg>

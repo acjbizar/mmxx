@@ -1,1 +1,1 @@
-<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 240 240"/>
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 240 240" data-codepoint="U+0020" data-char=" " data-variant="normal"><title>Glyph U+0020 ( )</title><desc>Generated glyph for U+0020 | SPACE | grid 8x8 | 256 bits | normal occupancy (1=active,0=inactive)</desc></svg>

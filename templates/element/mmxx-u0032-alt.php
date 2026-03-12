@@ -1,0 +1,1 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 240 240" data-codepoint="U+0032" data-char="2" data-variant="alt"><title>Glyph U+0032 (2) alt</title><desc>Generated glyph for U+0032 | DIGIT TWO | grid 8x8 | 256 bits | inverse occupancy (0=active,1=inactive)</desc><path d="M 0 120 L 30 120 L 30 90 L 0 90 Z M 210 150 L 240 150 L 240 120 L 225 135 Z" fill-rule="evenodd"/></svg>
