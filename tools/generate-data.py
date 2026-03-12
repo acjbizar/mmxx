@@ -22,12 +22,13 @@ Outputs (default):
   - data/glyphs.json        (portable data dump, includes bitstring)
   - data/glyphs_data.py     (Python module with GLYPHS dict, includes bitstring)
   - data/glyphs_bits.py     (compact Python module with codepoint -> bitstring)
+  - config/mmxx.php         (runtime-friendly CakePHP config export)
 
 Optional:
   - regenerated SVGs        (structured output from the binary data)
 
 Examples:
-  # Import existing SVGs and write JSON + Python files
+  # Import existing SVGs and write JSON + Python files + CakePHP config
   py tools/generate-data.py
 
   # Also regenerate SVGs into src/generated-glyphs
@@ -68,6 +69,7 @@ DEFAULT_DATA_DIR = ROOT / "data"
 DEFAULT_JSON_OUT = DEFAULT_DATA_DIR / "glyphs.json"
 DEFAULT_PY_OUT = DEFAULT_DATA_DIR / "glyphs_data.py"
 DEFAULT_BITS_OUT = DEFAULT_DATA_DIR / "glyphs_bits.py"
+DEFAULT_CAKE_CONFIG_OUT = ROOT / "config" / "mmxx.php"
 
 FILENAME_RE = re.compile(r"^character-u([0-9A-Fa-f]+)\.svg$")
 POLYGON_ID_RE = re.compile(r"^r(\d+)c(\d+)-(top|right|bottom|left)$")
@@ -244,6 +246,149 @@ def _char_repr(cp: int) -> str:
     return ch if _is_printable_char(ch) else ""
 
 
+def _group_glyph_chars(glyphs: Dict[int, GlyphRecord]) -> dict:
+    upper: List[str] = []
+    lower: List[str] = []
+    digits: List[str] = []
+    punct: List[str] = []
+    other: List[str] = []
+
+    for cp in sorted(glyphs):
+        ch = _char_repr(cp)
+        if not ch:
+            continue
+
+        if "A" <= ch <= "Z":
+            upper.append(ch)
+        elif "a" <= ch <= "z":
+            lower.append(ch)
+        elif "0" <= ch <= "9":
+            digits.append(ch)
+        elif ch.isprintable() and not ch.isalnum() and not ch.isspace():
+            punct.append(ch)
+        else:
+            other.append(ch)
+
+    all_chars = upper + lower + digits + punct + other
+
+    return {
+        "all": "".join(all_chars),
+        "uppercase": "".join(upper),
+        "lowercase": "".join(lower),
+        "digits": "".join(digits),
+        "punct": "".join(punct),
+        "other": "".join(other),
+        "codepoints": sorted(glyphs.keys()),
+    }
+
+
+def _codepoints_to_ranges(codepoints: List[int]) -> List[List[int]]:
+    if not codepoints:
+        return []
+
+    cps = sorted(set(codepoints))
+    ranges: List[List[int]] = []
+
+    start = prev = cps[0]
+    for cp in cps[1:]:
+        if cp == prev + 1:
+            prev = cp
+            continue
+        ranges.append([start, prev])
+        start = prev = cp
+    ranges.append([start, prev])
+
+    return ranges
+
+
+def _php_scalar(value, indent: int = 0) -> str:
+    """
+    Render Python scalars/lists/dicts into readable PHP array syntax.
+    """
+    pad = " " * indent
+    next_pad = " " * (indent + 4)
+
+    if value is None:
+        return "null"
+    if value is True:
+        return "true"
+    if value is False:
+        return "false"
+    if isinstance(value, int):
+        return str(value)
+    if isinstance(value, float):
+        return repr(value)
+    if isinstance(value, str):
+        escaped = (
+            value.replace("\\", "\\\\")
+                 .replace("'", "\\'")
+                 .replace("\r", "\\r")
+                 .replace("\n", "\\n")
+                 .replace("\t", "\\t")
+        )
+        return f"'{escaped}'"
+
+    if isinstance(value, list):
+        if not value:
+            return "[]"
+        lines = ["["]
+        for item in value:
+            lines.append(f"{next_pad}{_php_scalar(item, indent + 4)},")
+        lines.append(f"{pad}]")
+        return "\n".join(lines)
+
+    if isinstance(value, dict):
+        if not value:
+            return "[]"
+        lines = ["["]
+        for k, v in value.items():
+            lines.append(f"{next_pad}{_php_scalar(str(k))} => {_php_scalar(v, indent + 4)},")
+        lines.append(f"{pad}]")
+        return "\n".join(lines)
+
+    raise TypeError(f"Unsupported value for PHP export: {type(value)!r}")
+
+
+def build_cake_config_payload(
+    glyphs: Dict[int, GlyphRecord],
+    rows: int,
+    cols: int,
+    cell_size: int,
+) -> dict:
+    grouped = _group_glyph_chars(glyphs)
+    codepoints = grouped["codepoints"]
+    unicode_ranges = _codepoints_to_ranges(codepoints)
+
+    return {
+        "MMXX": {
+            "fontFamily": "mmxx",
+            "gridRows": rows,
+            "gridCols": cols,
+            "cellSize": cell_size,
+            "triangleOrder": list(TRI_ORDER),
+            "glyphCount": len(glyphs),
+
+            # Most useful runtime strings
+            "chars": grouped["all"],
+            "uppercase": grouped["uppercase"],
+            "lowercase": grouped["lowercase"],
+            "digits": grouped["digits"],
+            "punct": grouped["punct"],
+            "other": grouped["other"],
+
+            # Helpful for demos, validators, front-end helpers
+            "codepoints": codepoints,
+            "unicodeRanges": unicode_ranges,
+
+            # Convenience flags
+            "hasUppercase": bool(grouped["uppercase"]),
+            "hasLowercase": bool(grouped["lowercase"]),
+            "hasDigits": bool(grouped["digits"]),
+            "hasPunct": bool(grouped["punct"]),
+        }
+    }
+
+
 def build_json_payload(
     glyphs: Dict[int, GlyphRecord],
     rows: int,
@@ -369,6 +514,35 @@ def write_bits_module(
         key = f"u{cp:04x}"
         lines.append(f"    {key!r}: GLYPH_BITS[0x{cp:04X}],")
     lines.append("}")
+    lines.append("")
+
+    path.write_text("\n".join(lines), encoding="utf-8")
+
+
+def write_cake_config(
+    glyphs: Dict[int, GlyphRecord],
+    rows: int,
+    cols: int,
+    cell_size: int,
+    path: Path,
+) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+
+    payload = build_cake_config_payload(
+        glyphs,
+        rows=rows,
+        cols=cols,
+        cell_size=cell_size,
+    )
+
+    lines: List[str] = []
+    lines.append("<?php")
+    lines.append("declare(strict_types=1);")
+    lines.append("")
+    lines.append("// Auto-generated by tools/generate-data.py")
+    lines.append("// Runtime-friendly config for CakePHP/plugin usage.")
+    lines.append("")
+    lines.append("return " + _php_scalar(payload, 0) + ";")
     lines.append("")
 
     path.write_text("\n".join(lines), encoding="utf-8")
@@ -517,6 +691,18 @@ def parse_args() -> argparse.Namespace:
     p.add_argument("--bits-out", type=Path, default=DEFAULT_BITS_OUT, help=f"Write compact bitstring Python module (default: {DEFAULT_BITS_OUT})")
     p.add_argument("--no-bits", action="store_true", help="Do not write compact bitstring output")
 
+    p.add_argument(
+        "--cake-config-out",
+        type=Path,
+        default=DEFAULT_CAKE_CONFIG_OUT,
+        help=f"Write CakePHP runtime config (default: {DEFAULT_CAKE_CONFIG_OUT})",
+    )
+    p.add_argument(
+        "--no-cake-config",
+        action="store_true",
+        help="Do not write CakePHP config output",
+    )
+
     p.add_argument("--export-svgs", action="store_true", help="Export SVGs from the parsed binary glyph data")
     p.add_argument("--svg-out-dir", type=Path, default=DEFAULT_SRC_DIR / "generated-glyphs", help="Output directory for exported SVGs")
     p.add_argument("--overwrite", action="store_true", help="Overwrite existing exported SVGs")
@@ -574,6 +760,16 @@ def main() -> int:
     if not args.no_bits:
         write_bits_module(glyphs, rows=args.rows, cols=args.cols, path=args.bits_out)
         print(f"Wrote compact bitstrings: {args.bits_out}")
+
+    if not args.no_cake_config:
+        write_cake_config(
+            glyphs,
+            rows=args.rows,
+            cols=args.cols,
+            cell_size=args.cell_size,
+            path=args.cake_config_out,
+        )
+        print(f"Wrote CakePHP config: {args.cake_config_out}")
 
     if args.export_svgs:
         written = export_svgs(
